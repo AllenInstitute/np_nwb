@@ -37,8 +37,7 @@ def append(
     """Append one or more new components to an `.nwb` file.
 
     - callable from within a Python process, by passing & returning instances of `pynwb.NWBFile` 
-    - callable from the command line, in which case all three input arguments are required, with 
-      `nwb_file` specified as a path
+    - callable from the command line, in which case all three input arguments are required, with `nwb_file` specified as a path
     """
     session_folder = pathlib.Path(session_folder)
 
