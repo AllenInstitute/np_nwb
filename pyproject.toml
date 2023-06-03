@@ -1,12 +1,11 @@
-
 [project]
 name = "np_nwb"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tools for quickly generating `.nwb` files from non-standard Mindscope Neuropixels experiments."
 authors = [
-    {name = "arjunsridhar12345", email = "arjun.sridhar@alleninstitute.org"},
-    {name = "bjhardcastle", email = "ben.hardcastle@alleninstitute.org"},
-    {name = "mochic", email = "chrism@alleninstitute.org"},
+    { name = "arjunsridhar12345", email = "arjun.sridhar@alleninstitute.org" },
+    { name = "bjhardcastle", email = "ben.hardcastle@alleninstitute.org" },
+    { name = "mochic", email = "chrism@alleninstitute.org" },
 ]
 dependencies = [
     "np-session",
@@ -16,8 +15,13 @@ dependencies = [
 ]
 requires-python = ">=3.9"
 readme = "README.md"
-license = {text = "MIT"}
+
+[project.license]
+text = "MIT"
 
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = [
+    "setuptools>=61",
+    "wheel",
+]
 build-backend = "setuptools.build_meta"

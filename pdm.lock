@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "np-eyetracking"
-version = "0.1.1"
+version = "0.1.2"
 requires_python = ">=3.8"
 summary = "Tools for generating eye-tracking data for .nwb creation."
 dependencies = [
@@ -2207,9 +2207,9 @@ content_hash = "sha256:fe3fcb07826ad25aedc52647c5e263cd43b7a3bfdccf19f92698978bd
     {url = "https://files.pythonhosted.org/packages/38/cb/2f4a5e38f6cf52889b02df9ca5bdafffd535f97abf8e8e0f8dc0b9ded143/np_config-0.4.23-py3-none-any.whl", hash = "sha256:55f6525662da1c3ccdf6c72a74d2f746b45acf1ef77a5e579f75588a89960766"},
     {url = "https://files.pythonhosted.org/packages/a0/d8/20d1723e3c571494c6b7f6dec87c82429f56fc8ebac47909854116c4276c/np_config-0.4.23.tar.gz", hash = "sha256:11d01e44216bef14081b1c7ccf4d20af7a60daea31be2dd22278e33ddbfb87b5"},
 ]
-"np-eyetracking 0.1.1" = [
-    {url = "https://files.pythonhosted.org/packages/33/14/214a93c141ccb3b15ff54658cffce3b070526dd4395bedf35fe3b0f496b0/np_eyetracking-0.1.1.tar.gz", hash = "sha256:54d489b13ae55da6c57b5f17461242ce6cf1742ab7c1a478db737f60fa926c63"},
-    {url = "https://files.pythonhosted.org/packages/90/5c/fe1034d37b9d428f38eace7c30e172ddd73a86c567416e5c7a52a33b1d0b/np_eyetracking-0.1.1-py3-none-any.whl", hash = "sha256:eb3d251a2ae130b432db9b5f15748e25d28259489b3ffa2132641f185318f765"},
+"np-eyetracking 0.1.2" = [
+    {url = "https://files.pythonhosted.org/packages/90/20/56bdb4053daccc7cd5966f76ab1a90e903e3bf6dcf27c93a3915d5516cbb/np_eyetracking-0.1.2-py3-none-any.whl", hash = "sha256:a6d9d35ba8d20800b1856e97a8c79e62ef4129a78035a58565ad3b3de95f763a"},
+    {url = "https://files.pythonhosted.org/packages/fd/44/5269a88cd3e40792f99fe24f6f7f9176bb7eb7db79cc3b0c105966218586/np_eyetracking-0.1.2.tar.gz", hash = "sha256:6e6e8c45925e4e675272f4b3d9e5b22dbeac6dbb0265ab2c5413434dfdc03b02"},
 ]
 "np-logging 0.5.1" = [
     {url = "https://files.pythonhosted.org/packages/91/7b/9ba634f79c1267913f266444978f0672efdc8b9cb2b7c4fcd4358086875f/np_logging-0.5.1-py3-none-any.whl", hash = "sha256:b48435c17ba7182253c43666dbcab88472e14fabbd5089a248a08509572e1764"},
