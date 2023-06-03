@@ -102,4 +102,4 @@ def main(
 
 if __name__ == "__main__":
     doctest.testmod()
-    main(*sys.argv)
+    main(*sys.argv[1:])
