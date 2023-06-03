@@ -1,9 +1,6 @@
 # np_nwb
 Tools for quickly generating `.nwb` files from non-standard Mindscope Neuropixels experiments.
 
-# np_nwb
-Tools for quickly generating `.nwb` files from non-standard Mindscope Neuropixels experiments.
-
 Generating an `.nwb` file will entail:
 - inputting a path to a folder of raw data from a single experiment (`session_folder`)
 - creating an instance of `pynwb.NWBFile` and writing to disk (`nwb_file`)
@@ -37,7 +34,7 @@ def append(
     ) -> pynwb.NWBFile:
     """Append one or more new components to an `.nwb` file.
 
-    - callable from within a Python process, by accepting & returning instances of `pynwb.  NWBFile` 
+    - callable from within a Python process, by accepting & returning instances of `pynwb.NWBFile` 
     - callable from the command line, in which case all three input arguments are required, with `nwb_file` specified as a path
     """
     session_folder = pathlib.Path(session_folder)
