@@ -9,6 +9,7 @@ authors = [
     {name = "mochic", email = "chrism@alleninstitute.org"},
 ]
 dependencies = [
+    "np-session",
     "allensdk",
     "pynwb",
     "np-eyetracking>=0.1.1",
