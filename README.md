@@ -22,6 +22,7 @@ implements the following `append()` interface:
 ```python
 import logging
 import pathlib
+import tempfile
 from typing import Optional
 
 import pynwb
@@ -58,7 +59,7 @@ def load_nwb_from_disk(
     nwb_path: str | pathlib.Path,
     ) -> pynwb.NWBFile:
     logger.info(f'Loading nwb file at {nwb_path}')
-    with pynwb.NWBHDF5IO(output_path, mode='r') as f:
+    with pynwb.NWBHDF5IO(nwb_path, mode='r') as f:
         return f.read()
 
 
