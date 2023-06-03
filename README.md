@@ -1,9 +1,6 @@
 # np_nwb
 Tools for quickly generating `.nwb` files from non-standard Mindscope Neuropixels experiments.
 
-# np_nwb
-Tools for quickly generating `.nwb` files from non-standard Mindscope Neuropixels experiments.
-
 Generating an `.nwb` file will entail:
 - inputting a path to a folder of raw data from a single experiment (`session_folder`)
 - creating an instance of `pynwb.NWBFile` and writing to disk (`nwb_file`)
