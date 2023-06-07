@@ -41,7 +41,7 @@ def main(
         trials_table,
         nwb_file,
     )
-   np_tools.save_nwb(nwb_file, output_file)
+    np_tools.save_nwb(nwb_file, output_file)
     
     return nwb_file
 
