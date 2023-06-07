@@ -1,5 +1,5 @@
 """
-This module should initialize a `pynwb.NWBFile` with correct experiment &
+This module should append a `pynwb.NWBFile` with correct experiment &
 subject metadata. 
 
 See 

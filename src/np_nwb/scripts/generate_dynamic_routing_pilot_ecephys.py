@@ -7,10 +7,11 @@ from typing import Optional
 
 import np_eyetracking.dlc_lims.session_to_nwb as eye_tracking
 import np_logging
+import np_tools
 import np_session
 import pynwb
 
-import np_nwb.init_with_metadata.from_np_session as init
+import np_nwb.metadata.from_np_session as metadata
 import np_nwb.utils as utils
 
 def main(
@@ -20,22 +21,21 @@ def main(
     """
     Initialize a `pynwb.NWBFile`, add experiment & subject metadata.
     
-    `output_file` must be specified if called from command line, in order to
-    save to disk.
-    
     >>> nwb_file = main('DRpilot_626791_20220817')
     >>> isinstance(nwb_file, pynwb.NWBFile)
     True
     """
-    nwb_file = init.main(session_folder, output_file)
+    nwb_file = np_tools.init_nwb(
+        np_session.Session(session_folder),
+        description='Data and metadata for a Neuropixels ecephys experiment',
+        )
+    nwb_file = metadata.main(session_folder, output_file)
     nwb_file = eye_tracking.add_to_nwb(np_session.Session(session_folder), nwb_file)
     
-    utils.write_nwb_to_disk(nwb_file, output_file)
+    np_tools.save_nwb(nwb_file, output_file)
     
     return nwb_file
 
 
 if __name__ == "__main__":
-    np_logging.getLogger()
-    doctest.testmod(raise_on_error=True)
-    main(*sys.argv[1:])
+    main(*utils.parse_cli_args()[::2])

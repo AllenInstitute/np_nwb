@@ -12,6 +12,7 @@ dependencies = [
     "allensdk",
     "pynwb",
     "np-eyetracking>=0.1.1",
+    "np-tools>=0.1.16",
 ]
 requires-python = ">=3.9"
 readme = "README.md"

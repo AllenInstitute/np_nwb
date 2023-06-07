@@ -22,6 +22,7 @@ import pathlib
 import tempfile
 from typing import Optional
 
+import np_tools
 import pynwb
 
 logger = logging.getLogger(__name__)
@@ -42,35 +43,12 @@ def append(
     # ... process session_folder
 
     if not isinstance(nwb_file, pynwb.NWBFile):
-        nwb_file = load_nwb_from_disk(nwb_file) 
+        nwb_file = np_tools.load_nwb(nwb_file) 
     
     # ... append new components to nwb_file
 
     if output_file is not None:
-        write_nwb_to_disk(nwb_file, output_file)
+        np_tools.save_nwb(nwb_file, output_file)
     
     return nwb_file
-
-
-def load_nwb_from_disk(
-    nwb_path: str | pathlib.Path,
-    ) -> pynwb.NWBFile:
-    logger.info(f'Loading nwb file at {nwb_path}')
-    with pynwb.NWBHDF5IO(nwb_path, mode='r') as f:
-        return f.read()
-
-
-def write_nwb_to_disk(
-    nwb_file: pynwb.NWBFile, output_path: Optional[str | pathlib.Path] = None
-    ) -> None:
-    if output_path is None:
-        output_path = pathlib.Path(tempfile.mkdtemp()) / f'{nwb_file.session_id}.nwb'
-    
-    nwb_file.set_modified()
-
-    logger.info(f'Writing nwb file `{nwb_file.session_id!r}` to {output_path}')
-    with pynwb.NWBHDF5IO(output_path, mode='w') as f:
-        f.write(nwb_file, cache_spec=True)
-    logger.debug(f'Writing complete for nwb file `{nwb_file.session_id!r}`')
-  
 ```
