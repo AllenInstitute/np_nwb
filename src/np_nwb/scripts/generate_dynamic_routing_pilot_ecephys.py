@@ -6,6 +6,8 @@ import sys
 from typing import Optional
 
 import np_eyetracking.dlc_lims.session_to_nwb as eye_tracking
+from np_nwb_trials import processing as trials_processing
+from np_nwb_trials import nwb as trials
 import np_logging
 import np_tools
 import np_session
@@ -31,8 +33,15 @@ def main(
         )
     nwb_file = metadata.main(session_folder, output_file)
     nwb_file = eye_tracking.add_to_nwb(np_session.Session(session_folder), nwb_file)
-    
-    np_tools.save_nwb(nwb_file, output_file)
+    # TODO: cache trials_table somehow
+    trials_table = trials_processing.storage_directory_to_trials_table(
+        str(session_folder),
+    )
+    trials.append_trials_to_nwb(
+        trials_table,
+        nwb_file,
+    )
+   np_tools.save_nwb(nwb_file, output_file)
     
     return nwb_file
 
