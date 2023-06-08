@@ -1,7 +1,7 @@
 """
 This module should append a `pynwb.NWBFile` with correct experiment &
-subject metadata. 
+subject metadata.
 
-See 
+See
 https://nwbinspector.readthedocs.io/en/dev/best_practices/nwbfile_metadata.html#file-metadata
 """
