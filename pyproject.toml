@@ -14,6 +14,9 @@ dependencies = [
     "np-eyetracking>=0.1.1",
     "np-nwb-trials==0.3.0",
     "np-tools>=0.1.16",
+    "DynamicRoutingTask @ git+https://github.com/samgale/DynamicRoutingTask",
+    "ndx-events>=0.2.0",
+    "ndx-sound>=0.2.0",
 ]
 requires-python = ">=3.9"
 readme = "README.md"
