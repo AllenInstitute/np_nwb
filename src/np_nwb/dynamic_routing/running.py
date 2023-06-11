@@ -10,7 +10,7 @@ import logging
 import pathlib
 import sys
 import np_tools
-from typing import Optional, Sequence
+from typing import Callable, Literal, Optional, Sequence, TypeVar
 import uuid
 
 import h5py
@@ -23,6 +23,7 @@ import scipy.signal
 
 import np_nwb.utils as utils
 import np_nwb.interfaces as interfaces
+import np_nwb.dynamic_routing.utils as DR_utils
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,16 @@ FRAMERATE = 60
 """Visual stim f.p.s - assumed to equal running wheel sampling rate. i.e. one
 running wheel sample per camstim vsync"""
 
+UNITS: Literal['cm/s', 'm/s'] = 'cm/s'
+"""Running speed unit of measurement - NWB expects SI, but allows non-SI + a
+`conversion` scalar"""
+
+WHEEL_RADIUS: int | float
+"""Value currently assigned from hdf5 file - units correspond to `UNITS`"""
+
+LOWPASS_HZ = 4
+"""Frequency for filtering running speed - filtered data stored in NWB `processing`, unfiltered
+in `acquisition`"""
 
 def main(
     session: interfaces.SessionFolder,
@@ -41,6 +52,9 @@ def main(
     session, nwb_file, output_file = utils.parse_session_nwb_args(
         session, nwb_file, output_file
     )
+
+    obj = DR_utils.data_from_session(session)
+    """Sam's DR analysis - not needed currently"""
 
     # running wheel data is recorded with camstim output, so if we have
     # multiple pkl/h5 files, we need to pool their data:
@@ -54,21 +68,53 @@ def main(
             continue
         h5_files.append(h5_file)
         
-    running_speed, timestamps = get_filtered_running_speed_across_multiple_files(session, *h5_files)
+    running_speed, timestamps = get_running_speed_across_files(session, *h5_files, filt=None)
+    filtered_running_speed, timestamps = get_running_speed_across_files(session, *h5_files, filt=lowpass_filter)
+    # note: we can't simply filter the raw speed because it's not necessarily continuous 
+    # - it was [potentially] recorded across multiple files, with a time gap between them
+    
+    raw = pynwb.TimeSeries(
+            name='running',
+            description='Linear forward running speed on a rotating disk.',
+            data=running_speed,
+            timestamps=timestamps,
+            unit=UNITS,
+            conversion=0.01 if UNITS == 'm/s' else 1.,
+            comments=f'Assumes mouse runs at `radius = {WHEEL_RADIUS} {UNITS.split("/")[0]}` on disk.',
+        )  # type: ignore
 
-    nwb_file = add_to_nwb(running_speed, timestamps, nwb_file)
-
+    nwb_file.add_acquisition(raw)
+    
+    filtered = pynwb.TimeSeries(
+            name=raw.name,
+            description=f'{raw.description} Low-pass filtered at {LOWPASS_HZ} Hz with a 3rd order Butterworth filter.',
+            data=filtered_running_speed,
+            timestamps=raw.timestamps,
+            unit=UNITS,
+            conversion=0.01 if UNITS == 'm/s' else 1.,
+        )  # type: ignore
+    
+    module = nwb_file.processing.get('behavior') or nwb_file.create_processing_module(
+        name="behavior", description="Processed behavioral data",
+        )
+    # module = nwb_file.processing.get('running') or nwb_file.create_processing_module(
+    #     name="running", description="Processed running speed data",
+    #     )
+    module.add(filtered)
+    
     return nwb_file
 
 
+T = TypeVar('T')
 
-def get_filtered_running_speed_across_multiple_files(
-    session: np_session.Session, *h5_files: pathlib.Path
+def get_running_speed_across_files(
+    session: np_session.Session, *h5_files: pathlib.Path,
+    filt: Optional[Callable[[Sequence[T]], Sequence[T]]] = None,
 ) -> tuple[npt.NDArray, npt.NDArray]:
     """Pools running speeds across files. Returns arrays of running speed and
     corresponding timestamps."""
     
-    # we need timestamps for each frame (encoder reads for every vsync)
+    # we need timestamps for each frame (wheel encoder is read at every vsync)
     # sync file has 'vsyncs', but there may be multiple h5 files with encoder
     # data per sync file (ie vsyncs are in blocks with a separating gap)
     timestamp_blocks = utils.get_blocks_of_frame_timestamps(session)
@@ -98,7 +144,7 @@ def get_filtered_running_speed_across_multiple_files(
             )
 
         # we need to filter before pooling discontiguous blocks of samples
-        running_speed = np.concatenate((running_speed, filter_running_speed(h5_data)))
+        running_speed = np.concatenate((running_speed, filt(h5_data) if filt else h5_data))
         timestamps = np.concatenate((timestamps, timestamp_block))
 
     assert len(running_speed) == len(timestamps)
@@ -107,7 +153,7 @@ def get_filtered_running_speed_across_multiple_files(
 
 def get_running_speed(h5_file: pathlib.Path) -> npt.NDArray | None:
     """
-    Running speed in cm/s.
+    Running speed in m/s or cm/s (see `UNITS`).
 
 
     To align with timestamps, remove timestamp[0] and sample[0] and shift
@@ -127,47 +173,28 @@ def get_running_speed(h5_file: pathlib.Path) -> npt.NDArray | None:
             d['rotaryEncoderCount'][:] / d['rotaryEncoderCountsPerRev'][()]
         )
         wheel_radius_cm = d['wheelRadius'][()]
+        global WHEEL_RADIUS
+        if UNITS == 'm/s':
+            WHEEL_RADIUS = wheel_radius_cm / 100
+        elif UNITS == 'cm/s':
+            WHEEL_RADIUS = wheel_radius_cm
+        else:
+            raise ValueError(f'Unexpected units for running speed: {UNITS}')   
         speed = np.diff(
-            wheel_revolutions * 2 * np.pi * wheel_radius_cm * FRAMERATE
+            wheel_revolutions * 2 * np.pi * WHEEL_RADIUS * FRAMERATE
         )
         # we lost one sample due to diff: pad with nan to keep same number of samples
         return np.concatenate(([np.nan], speed))   # type: ignore
 
 
-def filter_running_speed(running_speed: npt.NDArray):
+def lowpass_filter(running_speed: npt.NDArray) -> npt.NDArray:
     """
     Careful not to filter discontiguous blocks of samples.
     See
     https://github.com/AllenInstitute/AllenSDK/blob/36e784d007aed079e3cad2b255ca83cdbbeb1330/allensdk/brain_observatory/behavior/data_objects/running_speed/running_processing.py
     """
-    b, a = scipy.signal.butter(3, Wn=4, fs=FRAMERATE, btype='lowpass')
+    b, a = scipy.signal.butter(3, Wn=LOWPASS_HZ, fs=FRAMERATE, btype='lowpass')
     return scipy.signal.filtfilt(b, a, np.nan_to_num(running_speed))
-
-
-def add_to_nwb(
-    running_speed: npt.NDArray,
-    timestamps: npt.NDArray,
-    nwb_file: pynwb.NWBFile,
-) -> pynwb.NWBFile:
-    """Add filtered data to a 'nwb.processing['behavior']"""   
-    
-    behavior_module = nwb_file.processing.get('behavior') or nwb_file.create_processing_module(
-        name="behavior", description="Processed behavioral data",
-        )
-    
-    unit = 'cm/s'
-    time_series = pynwb.TimeSeries(
-            name='running',
-            description='Linear forward running speed on a rotating disk. Low-pass filtered with a 3rd order Butterworth filter at 4 Hz.',
-            data=running_speed,
-            timestamps=timestamps,
-            unit=unit,
-            conversion=0.01 if unit == 'm/s' else 1.,
-        )  # type: ignore
-
-    behavior_module.add(time_series)
-    
-    return nwb_file
 
 
 if __name__ == '__main__':
