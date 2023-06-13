@@ -1,0 +1,71 @@
+params:
+  stim # link to stimulus template?
+  stim_index # 0-4 (incl catch) index in stim table
+  stim_name(str)
+  block_index
+  context_name(str)
+  trial_with_stim_index # not aborted/quiescent violation trials 
+  (within_block_)trial_with_stim_index
+  repeat_number # not incremented by catch 
+  preceding_incorrect_trials
+  **phase (grating)
+  **rng seed (sound)
+times:
+  start_time # -4
+  quiescent_period_start_time # -1.5
+  quiescent_period_stop_time # 0
+  stim_start_time # 0
+  response_window_start_time # 0.1
+  stim_stop_time # 0.5
+  (first_)response_time # varies
+    *reward_time # varies (first lick or autoreward time) + latency
+  response_window_stop_time # 1
+  post_response_window_start_time # 1
+  post_response_window_stop_time # 4
+  timeout_start_time # NaN (4)
+  timeout_stop_time # NaN (7)
+  stop_time # 4 (7)
+
+bools: 
+  *is_response # lick in response window
+  *is_correct(_action) # correct_response | correct_reject
+  is_hit # lick in response window, rewarded stim
+  is_false_alarm
+  is_correct_reject
+  is_miss 
+
+  is_rewarded # incl autorewards
+  is_auto_rewarded # is_rewarded & ~is_correct_action
+  is_reward_earned # is_rewarded & is_correct_action
+
+  is_vis_context
+  is_aud_context
+
+  is_vis_stim
+  is_aud_stim
+  is_catch(_stim)
+
+  is_go # target stim & same modality context 
+  is_nogo
+  # is_target
+  # is_nontarget
+  is_vis_target
+  is_vis_nontarget
+  is_aud_target
+  is_aud_nontarget
+
+  *is_aud_context_go
+  *is_vis_context_nogo
+  *is_aud_context_nogo
+
+  *is_timeout
+  is_repeat
+  is_quiescent_violation /aborted
+
+  is_context_switch # first trial with stim after block switch 
+
+timeseries:
+  behavior:
+    lick_events (filtered)
+    running_speed
+    water_reward
