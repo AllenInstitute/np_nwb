@@ -2,12 +2,17 @@ params:
   stim # link to stimulus template?
   stim_index # 0-4 (incl catch) index in stim table
   stim_name(str)
+
   block_index
   context_name(str)
-  trial_with_stim_index # not aborted/quiescent violation trials 
-  (within_block_)trial_with_stim_index
+
+  trial_idx # same as row number
+  trial_with_stim_index # not catch(?)/aborted/quiescent-violation trials 
+  within_block_trial_with_stim_index 
+  within_block_trial_with_non_contingent_reward_index
+
   repeat_number # not incremented by catch 
-  preceding_incorrect_trials
+
   **phase (grating)
   **rng seed (sound)
 times:
@@ -18,7 +23,7 @@ times:
   response_window_start_time # 0.1
   stim_stop_time # 0.5
   (first_)response_time # varies
-    *reward_time # varies (first lick or autoreward time) + latency
+  *reward_time # varies (first lick or autoreward time) + latency
   response_window_stop_time # 1
   post_response_window_start_time # 1
   post_response_window_stop_time # 4
@@ -29,14 +34,16 @@ times:
 bools: 
   *is_response # lick in response window
   *is_correct(_action) # correct_response | correct_reject
+  
   is_hit # lick in response window, rewarded stim
   is_false_alarm
   is_correct_reject
   is_miss 
 
   is_rewarded # incl autorewards
-  is_auto_rewarded # is_rewarded & ~is_correct_action
-  is_reward_earned # is_rewarded & is_correct_action
+  is_non_contingent_reward / is_auto_rewarded # is_rewarded & ~is_correct_action
+  is_reward_earned / is_contingent_reward # is_rewarded & is_correct_action
+  
 
   is_vis_context
   is_aud_context
