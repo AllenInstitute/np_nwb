@@ -1,0 +1,10 @@
+Subject:
+  subject_id:  # labtracks ID
+  description:
+  species: "Mus musculus"
+  genotype:
+  strain:
+  sex:  # required by DANDI
+  age:  # required by DANDI
+  weight:
+  date_of_birth:  # can be used instead of age
