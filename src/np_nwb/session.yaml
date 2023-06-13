@@ -6,19 +6,20 @@
   institution: Allen Institute
   experimenter:
     # choices:
-    - "Kuyat, Jackie"
-    - "McBride, Ethan"
-    - "Gale, Sam"
-    - "Bennett, Corbett"
-    - "Cabasco, Hannah"
-    # anyone running behav boxes?
+    - Kuyat, Jackie
+    - McBride, Ethan
+    - Gale, Sam
+    - Bennett, Corbett
+    - Cabasco, Hannah
+    # plus anyone running behav boxes?
+    # some files instead put all authors on related publication 
   experiment_description:
   keywords:
-    - "go-nogo"
-    - "context"
-    - "routing"
-    - "behavior"
-    - "neuropixels"
+    - go-nogo
+    - context
+    - routing
+    - behavior
+    - neuropixels
   notes:
   pharmacology:
   protocol:
