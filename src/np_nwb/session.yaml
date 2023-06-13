@@ -1,0 +1,32 @@
+ NWBFile:
+  session_id:  # required by DANDI - uuid
+  session_description: # required by NWB
+  session_start_time: # required by NWB
+  lab: Mindscope, Neural Circuits & Behavior
+  institution: Allen Institute
+  experimenter:
+    # choices:
+    - "Kuyat, Jackie"
+    - "McBride, Ethan"
+    - "Gale, Sam"
+    - "Bennett, Corbett"
+    - "Cabasco, Hannah"
+    # anyone running behav boxes?
+  experiment_description:
+  keywords:
+    - "go-nogo"
+    - "context"
+    - "routing"
+    - "behavior"
+    - "neuropixels"
+  notes:
+  pharmacology:
+  protocol:
+  related_publications:
+    - "https://doi.org/10.7554/eLife.78362"
+  source_script:
+  source_script_file_name:
+  data_collection:
+  surgery:
+  virus:
+  stimulus_notes:
