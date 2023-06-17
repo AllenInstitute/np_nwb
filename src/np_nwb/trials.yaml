@@ -7,7 +7,7 @@ params:
   context_name(str)
 
   trial_idx # same as row number
-  trial_with_stim_index # not catch(?)/aborted/quiescent-violation trials 
+  trial_with_stim_index # not catch/aborted/quiescent-violation trials 
   within_block_trial_with_stim_index 
   within_block_trial_with_non_contingent_reward_index
 
@@ -15,14 +15,17 @@ params:
 
   **phase (grating)
   **rng seed (sound)
+  
+  opto_area
+  opto_index # index in ogen site table / timeseries
 times:
-  start_time # -4
+  start_time # -3 (pre-)
   quiescent_period_start_time # -1.5
   quiescent_period_stop_time # 0
   stim_start_time # 0
   response_window_start_time # 0.1
   stim_stop_time # 0.5
-  (first_)response_time # varies
+  response_time # varies or NaN
   *reward_time # varies (first lick or autoreward time) + latency
   response_window_stop_time # 1
   post_response_window_start_time # 1
@@ -32,7 +35,7 @@ times:
   stop_time # 4 (7)
 
 bools: 
-  *is_response # lick in response window
+  is_response # lick in response window : Ethan + Ben for, Sam + Corbett against
   *is_correct(_action) # correct_response | correct_reject
   
   is_hit # lick in response window, rewarded stim
@@ -41,8 +44,8 @@ bools:
   is_miss 
 
   is_rewarded # incl autorewards
-  is_non_contingent_reward / is_auto_rewarded # is_rewarded & ~is_correct_action
-  is_reward_earned / is_contingent_reward # is_rewarded & is_correct_action
+  is_non_contingent_reward # is_rewarded & ~is_hit
+  is_contingent_reward # is_rewarded & is_hit
   
 
   is_vis_context
@@ -54,23 +57,18 @@ bools:
 
   is_go # target stim & same modality context 
   is_nogo
-  # is_target
-  # is_nontarget
+
   is_vis_target
   is_vis_nontarget
   is_aud_target
   is_aud_nontarget
 
-  *is_aud_context_go
-  *is_vis_context_nogo
-  *is_aud_context_nogo
-
-  *is_timeout
-  is_repeat
+  is_repeat # False for every trial on first attempt (used for d')
   is_quiescent_violation /aborted
 
-  is_context_switch # first trial with stim after block switch 
-
+  is_context_switch # first non-aborted trial (ie with stim) after block switch 
+  
+  is_opto_on # False normally
 timeseries:
   behavior:
     lick_events (filtered)
