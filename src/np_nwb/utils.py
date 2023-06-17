@@ -168,16 +168,16 @@ def get_frame_timestamps(
 
 
 def reshape_timestamps_into_blocks(
-    timestamps: Sequence[int | float],
+    timestamps: Sequence[float],
     min_gap: Optional[int | float] = None,
-) -> tuple[Sequence[int | float], ...]:
+) -> tuple[Sequence[float], ...]:
     """
     Find the large gaps in timestamps and split at each gap.
 
     For example, if two blocks of stimuli were recorded in a single sync
     file, there will be one larger-than normal gap in timestamps.
 
-    default min gap threshold: median + 6 * std (won't work well for short seqs)
+    default min gap threshold: median + 3 * std (won't work well for short seqs)
 
     >>> reshape_into_blocks([0, 1, 2, 103, 104, 105], min_gap=100)
     ([0, 1, 2], [103, 104, 105])
@@ -186,29 +186,39 @@ def reshape_timestamps_into_blocks(
     ([0, 1, 2, 3],)
     """
     intervals = np.diff(timestamps)
-    threshold = (
+    long_interval_threshold = (
         min_gap
         if min_gap is not None
-        else (np.median(intervals) + 6 * np.std(intervals))
+        else (np.median(intervals) + 3 * np.std(intervals))
     )
 
     ends_of_blocks = []
-    for interval in sorted(intervals, reverse=True):
-        if interval > threshold:
+    for interval_index, interval in zip(intervals.argsort()[::-1], sorted(intervals)[::-1]):
+        if interval > long_interval_threshold:
             # large interval found
-            ends_of_blocks.append(tuple(intervals).index(interval) + 1)
+            ends_of_blocks.append(interval_index)
         else:
             break
 
-    if not ends_of_blocks:
+    if not ends_of_blocks: 
+        # a single block of timestamps
         return (timestamps,)
-
+    
+    # create blocks as intervals [start:end]
+    ends_of_blocks.sort()
     blocks = []
     start = 0
     for end in ends_of_blocks:
         blocks.append(timestamps[start:end])
         start = end
     blocks.append(timestamps[start:])
+    
+    # filter out blocks with a single sample (not a block)
+    blocks = tuple(block for block in blocks if len(block) > 1)
+    
+    # filter out blocks with long avg timstamp interval (a few, widely-spaced timestamps)
+    blocks = tuple(block for block in blocks if np.median(np.diff(block)) < long_interval_threshold)
+    
     return tuple(blocks)
 
 
