@@ -473,8 +473,13 @@ class DRTaskTrials(PropertyDict):
         return self._sam.autoRewardScheduled
     
     @property
+    def stim_name(self) -> Sequence[str]:
+        """TODO"""
+        return self._sam.trialStim
+    
+    @property
     def _aud_stims(self) -> Sequence[str]:
-        return np.unique([stim for stim in self._sam.trialStim if 'sound' in stim.lower()])
+        return np.unique([stim for stim in self.stim_name if 'sound' in stim.lower()])
     
     @property
     def _vis_stims(self) -> Sequence[str]:
@@ -581,6 +586,11 @@ class DRTaskTrials(PropertyDict):
     @property
     def _rewarded_stim(self) -> Sequence[str]:
         return self._sam.blockStimRewarded[self.block_idx - 1]
+    
+    @property
+    def context_name(self) -> Sequence[str]:
+        """TODO"""
+        return np.array([name[:-1] for name in self._rewarded_stim])
     
     @property
     def is_vis_context(self) -> Sequence[bool]:
