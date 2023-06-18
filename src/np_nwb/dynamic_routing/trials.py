@@ -56,14 +56,18 @@ class PropertyDict(collections.abc.Mapping):
     def __repr__(self) -> str:
         return reprlib.repr(self._dict)
 
-    def to_add_trial_columns(
+    def to_add_trial_column(
         self
     ) -> Generator[dict[Literal['name', 'description'], str], None, None]:
         """Name and description for each trial column.
         
+        Does not include `start_time` and `stop_time`: those columns 
+        always exist in an nwb trials table, trying to add them again raises 
+        an error. 
+        
         Iterate over result and unpack each dict:
         
-        >>> for column in obj.to_add_trial_columns(): # doctest: +SKIP
+        >>> for column in obj.to_add_trial_column(): # doctest: +SKIP
         ...    nwb_file.add_trial_column(**column)
 
         """
@@ -71,20 +75,25 @@ class PropertyDict(collections.abc.Mapping):
         descriptions = self._docstrings
         missing = tuple(column for column in attrs if column not in descriptions)
         if any(missing):
-           raise UserWarning(f'These properties do not have descriptions (add docstrings to their property getters): {missing}')
+            logger.warning(f'These properties do not have descriptions (add docstrings to their property getters): {missing}')
         descriptions.update(dict(zip(missing, ('' for _ in missing))))
+        descriptions.pop('start_time', None)
+        descriptions.pop('stop_time', None)
         return ({'name': name, 'description': description} for name, description in descriptions.items())
     
-    def to_add_trials(self) -> Generator[dict[str, int | float | str | datetime.datetime], None, None]:
+    def to_add_trial(self) -> Generator[dict[str, int | float | str | datetime.datetime], None, None]:
         """Column name and value for each trial.
             
         Iterate over result and unpack each dict:
         
-        >>> for trial in obj.to_add_trials(): # doctest: +SKIP
-        ...    nwb_file.add_trials(**trial)
+        >>> for trial in obj.to_add_trial(): # doctest: +SKIP
+        ...    nwb_file.add_trial(**trial)
         
         """
-        # for trial in self.to_dataframe().itertuples(index=False):
+        mandatory_columns = ('start_time', 'stop_time')
+        if any(mandatory not in self._properties for mandatory in mandatory_columns):
+            raise AttributeError(f'{self} is missing one of {mandatory_columns = } required for nwb trials table')
+        
         for trial in self.to_dataframe().iterrows():
             yield dict(trial[1])
     
@@ -111,13 +120,14 @@ class PropertyDict(collections.abc.Mapping):
 
 class TestPropertyDict(PropertyDict):
     """
-    >>> TestPropertyDict()
+    >>> obj = TestPropertyDict()
+    >>> obj
     {'no_docstring': True, 'visible_property': True, 'visible_property_getter': True}
     
-    >>> TestPropertyDict().invisible_method()
+    >>> obj.invisible_method()
     True
     
-    >>> TestPropertyDict()._docstrings
+    >>> obj._docstrings
     {'no_docstring': '', 'visible_property_getter': 'Docstring available'}
     """
     
@@ -140,28 +150,33 @@ class TestPropertyDict(PropertyDict):
 
 class TestPropertyDictExports(PropertyDict):
     """
-    >>> TestPropertyDictExports()
-    {'start_time': [1.0, 2.0], 'stop_time': [1.5, 2.5]}
+    >>> obj = TestPropertyDictExports()
     
-    >>> for kwargs in TestPropertyDictExports().to_add_trials():
+    >>> for kwargs in obj.to_add_trial_column():
     ...     print(kwargs)
-    {'start_time': 1.0, 'stop_time': 1.5}
-    {'start_time': 2.0, 'stop_time': 2.5}
+    {'name': 'test_start_time', 'description': 'Start of trial'}
+    {'name': 'test_stop_time', 'description': 'End of trial'}
     
-    >>> for kwargs in TestPropertyDictExports().to_add_trial_columns():
+    note: `start_time` and `stop_time` cannot be added as columns (they always
+    exist)
+    
+    >>> for kwargs in obj.to_add_trial():
     ...     print(kwargs)
-    {'name': 'start_time', 'description': 'Start of trial'}
-    {'name': 'stop_time', 'description': 'End of trial'}
+    {'start_time': 0.0, 'stop_time': 1.0, 'test_start_time': 1.0, 'test_stop_time': 1.5}
+    {'start_time': 1.0, 'stop_time': 2.0, 'test_start_time': 2.0, 'test_stop_time': 2.5}
     """
+    start_time = [0,1]
+    stop_time = [1,2]
+    
     @property
-    def start_time(self) -> Sequence[float]:
+    def test_start_time(self) -> Sequence[float]:
         "Start of trial"
         return [1.0, 2.0]
 
     @property
-    def stop_time(self) -> Sequence[float]:
+    def test_stop_time(self) -> Sequence[float]:
         "End of trial"
-        return [start + 0.5 for start in self.start_time]
+        return [start + 0.5 for start in self.test_start_time]
     
 class DRDataLoader:
     """Class for finding required raw data from a DRpilot session.
@@ -376,11 +391,11 @@ class DRTaskTrials(PropertyDict):
     
     >>> obj = DRTaskTrials("DRpilot_626791_20220817") # doctest: +SKIP
     
-    >>> for column in obj.to_add_trial_columns(): # doctest: +SKIP
+    >>> for column in obj.to_add_trial_column(): # doctest: +SKIP
     ...    nwb_file.add_trial_column(**column)
         
-    >>> for trial in obj.to_add_trials(): # doctest: +SKIP
-    ...    nwb_file.add_trials(**trial)
+    >>> for trial in obj.to_add_trial(): # doctest: +SKIP
+    ...    nwb_file.add_trial(**trial)
         
     """
     
@@ -506,7 +521,6 @@ class DRTaskTrials(PropertyDict):
         return np.unique([stim for stim in self._vis_stims if stim not in self._targets])
     
     
-    
     @property
     def is_aud_stim(self) -> Sequence[bool]:
         """An auditory stimulus was presented.
@@ -523,7 +537,7 @@ class DRTaskTrials(PropertyDict):
         - target and non-target stimuli
         - rewarded and unrewarded contexts
         """
-        return np.isin(self._sam.trialStim, self._aud_stims)
+        return np.isin(self._sam.trialStim, self._vis_stims)
     
     @property
     def is_catch(self) -> Sequence[bool]:
@@ -551,41 +565,87 @@ class DRTaskTrials(PropertyDict):
         return np.isin(self._sam.trialStim, self._vis_nontargets)
     
     @property
-    def block_idx(self) -> Sequence[int]:
-        """1-indexed block number, increments with each b."""
-        assert 0 not in self._sam.trialBlock
-        return self._sam.trialBlock
+    def repeat_number(self) -> Sequence[float]:
+        """Number of times the trial has already been presented in immediately
+        preceding trials (repeated due to false alarm).
+        
+        - nan for aborted trials
+        - nan for catch trials
+        """
+        zeros = np.zeros_like(self.index)
+        repeats = np.where(np.isnan(self.index), zeros, np.nan * zeros)
+        counter = 0
+        for idx in np.where(repeats == 0)[0]:
+            if self.is_repeat[idx]:
+                counter += 1
+            else:
+                counter = 0
+            repeats[idx] = int(counter)
+        return repeats
     
     @property
-    def idx_within_block(self) -> Sequence[int]:
-        """1-indexed trial number within a block, increments over the block.
+    def stim_index(self) -> Sequence[float]:
+        """0-indexed stim number, randomized over trials.
+        
+        - refers to `nwb.stimulus.templates` table
+        - nan for aborted trials
+        - nan for catch trials
+        """
+        # TODO
+        return np.nan * np.zeros_like(self.start_time)
+    
+    @property
+    def block_index(self) -> Sequence[int]:
+        """0-indexed block number, increments with each block."""
+        assert min(self._sam.trialBlock) == 1
+        return self._sam.trialBlock - 1
+    
+    @property
+    def index_all(self) -> Sequence[int]:
+        """0-indexed trial number, increments over time.
+        
+        - includes aborted trials
+        - includes catch trials
+        """
+        return np.arange(len(self.start_time))
+    
+    @property
+    def index(self) -> Sequence[int]:
+        """0-indexed trial number for regular trials (with stimuli), increments over
+        time.
+        
+        - nan for catch trials
+        - nan for aborted trials
+        """
+        regular_trial_index = np.nan * np.zeros_like(self.start_time)
+        counter = 0
+        for idx in range(len(self.start_time)):
+            if not (self.is_catch[idx] or self.is_aborted[idx]):
+                regular_trial_index[idx] = int(counter)
+                counter += 1
+        return regular_trial_index
+    
+    
+    @property
+    def index_within_block(self) -> Sequence[int]:
+        """0-indexed trial number within a block, increments over the block.
         
         # TODO aborted trials not tracked
         """
-        return 1 + np.concatenate([np.arange(count) for count in np.unique(self.block_idx, return_counts=True)[1]])
+        return np.concatenate([np.arange(count) for count in np.unique(self.block_index, return_counts=True)[1]])
     
     @property
-    def scheduled_reward_idx_within_block(self) -> Sequence[int | float]:
+    def scheduled_reward_index_within_block(self) -> Sequence[int | float]:
         """
-        # TODO check w/Sam - changed from 'noncontingent_reward_idx_within_block'
-        
+        # TODO check w/Sam
+         - changed from 'noncontingent_reward_index_within_block'
+         - autoreward scheduled, not necessarily given
         """
-        return np.where(self.is_reward_scheduled == True, self.idx_within_block, np.nan * np.ones_like(self.idx_within_block))
-    
-    @property
-    def idx_with_stim(self) -> Sequence[int]:
-        """1-indexed trial number for trials with stimuli, increments over
-        time.
-        
-        - excludes catch trials
-        - excludes aborted trials
-        """
-        return 1 + np.concatenate([np.arange(count) for count in np.unique(self.block_idx, return_counts=True)[1]])
-    
+        return np.where(self.is_reward_scheduled == True, self.index_within_block, np.nan * np.ones_like(self.index_within_block))
     
     @property
     def _rewarded_stim(self) -> Sequence[str]:
-        return self._sam.blockStimRewarded[self.block_idx - 1]
+        return self._sam.blockStimRewarded[self.block_index]
     
     @property
     def context_name(self) -> Sequence[str]:
@@ -609,7 +669,9 @@ class DRTaskTrials(PropertyDict):
         """The trial is a repetition of the previous trial, which resulted in a
         miss.
         
-        - always False on first trial after context block switch
+        - always False on first full trial after context block switch
+        - False for all aborted trials
+        - False for catch trials
         """
         return self._sam.trialRepeat
     
@@ -627,13 +689,29 @@ class DRTaskTrials(PropertyDict):
         """Optogenetic inactivation was applied during the trial."""
         return np.isnan(self.opto_start_time)
     
+    
+    @property
+    def opto_area_name(self) -> Sequence[str]:
+        """Target location for optogenetic inactivation during the trial."""
+        # TODO
+        return np.nan * np.ones_like(self.is_opto)
+    
+    @property
+    def opto_area_index(self) -> Sequence[int | float]:
+        """Target location for optogenetic inactivation during the trial.
+        
+        - nan if no opto applied
+        """
+        # TODO
+        return np.nan * np.ones_like(self.is_opto)
+    
     @property
     def is_context_switch(self) -> Sequence[bool]:
         """The first trial with a stimulus after a change in context.
         
         - excludes aborted trials
         """
-        return np.isin(self.idx_within_block, 1)
+        return np.isin(self.index_within_block, 1)
     
     """
     @property
@@ -668,8 +746,22 @@ class DRTaskTrials(PropertyDict):
 
 if __name__ == "__main__":
     doctest.testmod()
+
     
     x = DRTaskTrials("DRpilot_626791_20220817")
-    x.start_time
-    x.to_add_trial_columns()
+    x.repeat_number
+    
+    import np_tools
+    nwb = np_tools.init_nwb(x._data.session)
+    for column in x.to_add_trial_column():
+        nwb.add_trial_column(**column)
+    for trial in x.to_add_trial():
+        nwb.add_trial(**trial)
+        
+    import yaml
+    pathlib.Path('test.yaml').write_text(
+        yaml.dump(x._docstrings, line_break='\n')
+        )
+    
+    x.to_add_trial_column()
     # x.to_add_trials()
