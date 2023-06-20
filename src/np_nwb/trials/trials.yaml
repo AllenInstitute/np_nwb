@@ -21,8 +21,8 @@ params:
 
 times:
   start_time # -3 (pre-)
-  quiescent_period_start_time # -1.5
-  quiescent_period_stop_time # 0
+  quiescent_start_time # -1.5
+  quiescent_stop_time # 0
   opto_start_time # (NaN)
   stim_start_time # 0
   response_window_start_time # 0.1

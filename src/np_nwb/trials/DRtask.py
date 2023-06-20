@@ -1,263 +1,32 @@
 from __future__ import annotations
-import contextlib
 
+import collections.abc
+import contextlib
 import datetime
 import doctest
 import functools
 import pathlib
-import collections.abc
 import reprlib
-from typing import Any, Generator, Iterable, Iterator, Literal, NamedTuple, Optional, Sequence
 import warnings
+from typing import (Any, Generator, Iterable, Iterator, Literal, NamedTuple,
+                    Optional, Sequence)
 
+import allensdk.brain_observatory.sync_dataset as sync_dataset
+import h5py
+import np_logging
+import np_session
+import np_tools
 import numpy as np
 import pandas as pd
-import np_session
-import np_logging
-import np_tools
-import h5py
 import pynwb
-import allensdk.brain_observatory.sync_dataset as sync_dataset
 from Analysis.DynamicRoutingAnalysisUtils import DynRoutData
 
-import np_nwb.utils as utils
 import np_nwb.interfaces as interfaces
+import np_nwb.utils as utils
 from np_nwb.trials.property_dict import PropertyDict
 
 logger = np_logging.getLogger(__name__)
 
-
-class DRDataLoader:
-    """Class for finding required raw data from a DRpilot session.
-    """
-    
-    session: np_session.DRPilotSession
-    
-    def __init__(self, session: str | pathlib.Path | np_session.Session):
-        """Provide a folder path or `np_session.Session` input arg"""
-        self.session = np_session.DRPilotSession(str(session))
-
-    def __repr__(self) -> str:
-        return f'{self.__class__.__name__}({self.task_hdf5})'
-    
-    @property
-    def sam(self) -> DynRoutData | None:
-        """Sam's analysis object using data from an hdf5 file.
-        
-        Loading behav data may fail due to missing keys if not an ecephys experiment.
-        """
-        with contextlib.suppress(AttributeError):
-            return self._sam
-               
-        obj = DynRoutData()
-        self._sam = None
-        with contextlib.suppress(Exception):
-            obj.loadBehavData(self.task_hdf5)
-            self._sam = obj
-            
-        return self.sam
-    
-    @property
-    def task_hdf5(self) -> pathlib.Path:
-        return next(file for file in self.session.hdf5s if 'DynamicRouting' in file.stem)
-    
-    @property
-    def task(self) -> h5py.File:
-        with contextlib.suppress(AttributeError):
-            return self._task
-        self._task = h5py.File(self.task_hdf5)
-        return self.task
-    
-    @property
-    def rf_hdf5(self) -> pathlib.Path | None:
-        return next((file for file in self.session.hdf5s if 'RFMapping' in file.stem), None)
-    
-    @property
-    def rf(self) -> h5py.File:
-        with contextlib.suppress(AttributeError):
-            return self._rf
-        self._rf = h5py.File(self.rf_hdf5)
-        return self.rf
-
-    @property
-    def sync(self) -> sync_dataset.Dataset | None:
-        with contextlib.suppress(AttributeError):
-            return self._sync
-        if self.session.sync:
-            self._sync = sync_dataset.Dataset(self.session.sync)
-        else:
-            self._sync = None
-        return self.sync
-    
-    class Times(NamedTuple):
-        main: Sequence[float]
-        rf: Sequence[float] | None
-    
-    
-    
-    @property
-    def vsync_time_blocks(self) -> Times:
-        """Blocks of vsync falling edge times from sync: one block per stimulus.
-        
-        Not available (or needed) for experiments without sync.
-        """
-        if self.sync is None:
-            raise AttributeError(f'Cannot get sync file for {self}')
-        
-        with contextlib.suppress(AttributeError):
-            return self._vsync_time_blocks
-        
-        vsync_rising_edges: Sequence[float] = self.sync.get_rising_edges('vsync_stim', units = 'seconds')
-        vsync_falling_edges: Sequence[float] = self.sync.get_falling_edges('vsync_stim', units = 'seconds')
-        all_vsync_times = vsync_falling_edges if vsync_rising_edges[0] < vsync_falling_edges[0] else vsync_falling_edges[1:]
-        
-        vsync_times_in_blocks = [] 
-        for vsyncs in utils.reshape_timestamps_into_blocks(all_vsync_times):
-            long_interval_threshold = np.median(np.diff(vsyncs)) + 3 * np.std(np.diff(vsyncs))
-            while np.diff(vsyncs)[0] > long_interval_threshold:
-                vsyncs = vsyncs[1:]
-                
-            while np.diff(vsyncs)[-1] > long_interval_threshold:
-                vsyncs = vsyncs[:-1]
-            vsync_times_in_blocks.append(vsyncs)
-            
-        block_lengths = tuple(len(block) for block in vsync_times_in_blocks)
-        self.main_stim_block_idx = block_lengths.index(max(block_lengths))
-        self.rf_block_idx = None
-        if len(vsync_times_in_blocks) <= 2:
-            self.rf_block_idx = int(not self.main_stim_block_idx)
-        else:
-            logger.warning("More than 2 vsync blocks found: cannot determine which is which. Assumptions made may be incorrect.")
-        
-        stim_running_rising_edges: Sequence[float] = self.sync.get_rising_edges('stim_running', units = 'seconds')
-        stim_running_falling_edges: Sequence[float] = self.sync.get_falling_edges('stim_running', units = 'seconds')
-        
-        if len(stim_running_rising_edges) and len(stim_running_falling_edges):
-            if stim_running_rising_edges[0] > stim_running_falling_edges[0]:
-                stim_running_falling_edges[1:]
-            assert len(stim_running_rising_edges) == len(vsync_times_in_blocks)
-            # TODO filter vsync blocks on stim running
-        
-        self._vsync_time_blocks = self.Times(main=vsync_times_in_blocks[self.main_stim_block_idx], rf=vsync_times_in_blocks[self.rf_block_idx]if self.rf_block_idx else None)
-        return self.vsync_time_blocks
-    
-    @property
-    def frame_display_time_blocks(self) -> Times:
-        """Blocks of adjusted diode times from sync: one block per stimulus.
-        
-        Not available (or needed) for experiments without sync.
-        
-        Assumes task was the longest block of diode
-        stim events (RFmapping / opto are shorter)
-        """
-        if self.sync is None:
-            raise AttributeError(f'Cannot get sync file for {self}')
-        
-        with contextlib.suppress(AttributeError):
-            return self._frame_display_time_blocks
-            
-        diode_rising_edges: Sequence[float] = self.sync.get_rising_edges('stim_photodiode', units = 'seconds')
-        diode_falling_edges: Sequence[float] = self.sync.get_falling_edges('stim_photodiode', units = 'seconds')
-        assert abs(len(diode_rising_edges) - len(diode_falling_edges)) < 2
-        
-        diode_rising_edges_in_blocks = utils.reshape_timestamps_into_blocks(diode_rising_edges)
-        diode_falling_edges_in_blocks = utils.reshape_timestamps_into_blocks(diode_falling_edges)
-        
-        diode_times_in_blocks = []
-        for idx, (vsyncs, rising, falling) in enumerate(zip(self.vsync_time_blocks, diode_rising_edges_in_blocks, diode_falling_edges_in_blocks)):
-            
-            # diodeBox in Sam's TaskControl script is initially set to 1, but
-            # drawing the first frame inverts to -1, so assuming the pre-stim
-            # frames are grey then the first frame is a grey-to-black (falling)
-            # transition
-            falling = falling[falling > vsyncs[0]]
-            rising = rising[rising > falling[0]]
-            
-            diode_flips = np.sort(np.concatenate((rising, falling)))
-            
-            short_interval_threshold = 0.1 * 1/60
-            long_interval_threshold = np.mean(np.diff(diode_flips)) + 3 * np.std(np.diff(diode_flips))
-            # long threshold should only be applied at start or end of timestamps
-            
-            while np.diff(diode_flips)[0] > long_interval_threshold:
-                diode_flips = diode_flips[1:]
-                
-            while np.diff(diode_flips)[-1] > long_interval_threshold:
-                diode_flips = diode_flips[:-1]
-                
-            def short_interval_indices(frametimes):
-                intervals = np.diff(frametimes)
-                return np.where(intervals < short_interval_threshold)[0]
-            
-            while any(short_interval_indices(diode_flips)):
-                indices = short_interval_indices(diode_flips)
-                diode_flips = np.delete(diode_flips, slice(indices[0], indices[0] + 2))
-            
-            if len(diode_flips) - len(vsyncs) == 1:
-                # likely transition from last frame to grey
-                diode_flips = diode_flips[:-1]
-            
-            if round(np.mean(np.diff(diode_flips)), 1) == round(np.mean(np.diff(vsyncs)), 1):
-                # diode flip every vsync
-                
-                if len(diode_flips) != len(vsyncs):
-                    logger.warning(f'Mismatch in stim block {idx = }: {len(diode_flips) = }, {len(vsyncs) = }')
-                
-                    if len(diode_flips) > len(vsyncs):
-                        logger.warning('Cutting excess diode flips at length of vsyncs')
-                        diode_flips = diode_flips[:len(vsyncs)]
-                    else:
-                        raise IndexError('Fewer diode flips than vsyncs: needs investigating')
-            else:
-                pass
-                # TODO adjust frametimes with diode data when flip is every 1 s
-
-            # intervals have bimodal distribution due to asymmetry of
-            # photodiode thresholding: adjust intervals to get a closer
-            # estimate of actual transition time 
-            intervals = np.diff(diode_flips)
-            mean_flip_interval = np.mean(intervals)
-            shift = 0.5 * np.median(abs(intervals - mean_flip_interval))
-            
-            for idx in range(0, len(diode_flips) - 1, 2):
-                # alternate on every short/long interval and shift accordingly
-                if idx == 0:
-                    if intervals[0] > mean_flip_interval:
-                        shift = -shift 
-                diode_flips[idx] -= shift
-                diode_flips[idx + 1] += shift
-                
-            AVERAGE_SCREEN_REFRESH_TIME = 0.008
-            """Screen refreshes in stages top-to-bottom, total 16 ms measured by
-            Corbett, use center as average"""
-            frametimes = diode_flips + AVERAGE_SCREEN_REFRESH_TIME
-            diode_times_in_blocks.append(frametimes)
-        
-        self._frame_display_time_blocks = self.Times(main=diode_times_in_blocks[self.main_stim_block_idx], rf=diode_times_in_blocks[self.rf_block_idx] if self.rf_block_idx else None)
-        return self.frame_display_time_blocks
-    
-    @property   
-    def task_frametimes(self) -> Sequence[float]:
-        """If sync file present, """
-        if self.sync:
-            return self.frame_display_time_blocks.main
-        else:
-            assert self.sam is not None
-            monitor_latency = 0.028 # s
-            # 0.020 s avg to start refreshing (top line of monitor)
-            # 0.008 s (after the top line) for center of monitor to refresh
-            return self.sam.trialStartTimes + monitor_latency
-
-    @property
-    def rf_frametimes(self) -> Sequence[float]:
-        if not self.sync:
-            raise AttributeError(f'No sync file: rf times only available for ecephys experiments with sync: {self.session}')
-        
-        if not self.frame_display_time_blocks.rf:
-            raise AttributeError(f'A block of frametimes corresponding to rf mapping was not found for this experiment: {self.session}')
-       
-        return self.frame_display_time_blocks.rf
-    
 
 class DRTaskTrials(PropertyDict):
     """All property getters without a leading underscore will be
@@ -276,29 +45,31 @@ class DRTaskTrials(PropertyDict):
         
     """
     
-    _data: DRDataLoader
+    _data: utils.DRDataLoader
     
     def __init__(self, session: str | pathlib.Path | np_session.Session, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._data = DRDataLoader(session) # session is stored in obj
+        self._data = utils.DRDataLoader(session) # session is stored in obj
         
     def get_display_times(self, frame_idx: Sequence[float]):
         return np.array(self._data.task_frametimes)[frame_idx]
 
-    def get_task_times(self, frame_idx: Sequence[float]):
-        """Times of task event 'frames' relative to start of sync"""
+    def get_script_times(self, frame_idx: Sequence[float]):
+        """Times of psychopy script 'frames' relative to start of sync"""
+        # TODO pull from nans if frame_idx is nan
         return self._first_vsync_time + self._sam.frameTimes[frame_idx]
+    
     # ---------------------------------------------------------------------- #
     # helper-properties that won't become columns:
     
     @property
     def _has_opto(self) -> bool:
-        return hasattr(self._sam, 'trialOptoOnsetFrame')
+        return hasattr(self._sam, 'optoVoltage') and any(self._sam.optoVoltage)
 
     @property
     def _first_vsync_time(self) -> float:
         # TODO update to use rising edge, or subtract avg (falling - rising)
-        return min(block[0] for block in self._data.vsync_time_blocks)
+        return self._data.vsync_time_blocks.main[0]
     
     @property
     def _sam(self) -> DynRoutData:
@@ -308,7 +79,6 @@ class DRTaskTrials(PropertyDict):
     @property
     def _h5(self) -> h5py.File:
         return self._data.task
-    
     
     @property
     def _aud_stims(self) -> Sequence[str]:
@@ -351,7 +121,7 @@ class DRTaskTrials(PropertyDict):
         
         - currently discards inter-trial period and any quiescent violations
         """
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame - self._h5['preStimFramesFixed'][()]  - self._h5['quiescentFrames'][()]
         )
 
@@ -363,7 +133,7 @@ class DRTaskTrials(PropertyDict):
         - currently just the last quiescent period which was not violated
         - not tracking quiescent violations
         """
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame - self._h5['quiescentFrames'][()]
         )
     
@@ -371,14 +141,14 @@ class DRTaskTrials(PropertyDict):
     def quiescent_stop_time(self) -> Sequence[float]:
         """End of period in which the subject should not lick, otherwise the
         trial will be aborted and start over."""
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame
         )
         
     @property
     def response_window_start_time(self) -> Sequence[float]:
         """"""
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame + self._h5['responseWindow'][()][0]
         )
         
@@ -387,9 +157,13 @@ class DRTaskTrials(PropertyDict):
         """Onset of optogenetic inactivation."""
         if not self._has_opto:
             return np.nan * np.ones_like(self.start_time)
-        return self.get_task_times(
-            self._sam.stimStartFrame + self._sam.trialOptoOnsetFrame
-        ) 
+        return np.where(
+            ~np.isnan(self._sam.trialOptoOnsetFrame), 
+            self.get_script_times(
+                self._sam.stimStartFrame + self._sam.trialOptoOnsetFrame
+            ),
+            np.nan * np.ones_like(self.start_time),
+        )
 
     @property
     def opto_stop_time(self) -> Sequence[float]:
@@ -406,10 +180,10 @@ class DRTaskTrials(PropertyDict):
             if self.is_vis_stim[idx]:
                 starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
             if self.is_catch[idx]:
-                starts[idx] = self.get_task_times(self._sam.stimStartFrame[idx])
+                starts[idx] = self.get_script_times(self._sam.stimStartFrame[idx])
             if self.is_aud_stim[idx]:
                 # TODO get corrected aud offset
-                starts[idx] = self.get_task_times(self._sam.stimStartFrame[idx])
+                starts[idx] = self.get_script_times(self._sam.stimStartFrame[idx])
         return starts
 
     @property
@@ -420,16 +194,16 @@ class DRTaskTrials(PropertyDict):
             if self.is_vis_stim[idx]:
                 ends[idx] = self.get_display_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()] + 1)
             if self.is_catch[idx]:
-                ends[idx] = self.get_task_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()] + 1)
+                ends[idx] = self.get_script_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()] + 1)
             if self.is_aud_stim[idx]:
                 # TODO get corrected aud offset
-                ends[idx] = self.get_task_times(self._sam.stimStartFrame[idx]) + self._h5['soundDur'][()]
+                ends[idx] = self.get_script_times(self._sam.stimStartFrame[idx]) + self._h5['soundDur'][()]
         return ends
         
     @property
     def response_window_stop_time(self) -> Sequence[float]:
         """"""
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame + self._h5['responseWindow'][()][1]
         )
         
@@ -441,7 +215,7 @@ class DRTaskTrials(PropertyDict):
     @property
     def post_response_window_stop_time(self) -> Sequence[float]:
         """"""
-        return self.get_task_times(
+        return self.get_script_times(
             self._sam.stimStartFrame + self._h5['postResponseWindowFrames'][()]
         )
     
@@ -777,6 +551,157 @@ class DRTaskTrials(PropertyDict):
         """"""
         return 
     """
+    
+    
+class TrialsObj:
+    def __init__(self, h5: h5py.File):
+        self._h5 = h5
+        for attr in (
+            'stimFrames',
+            'interStimFrames',
+            'stimStartFrame',
+            'trialFullFieldContrast',
+            'trialVisXY',
+            'trialGratingOri',
+            'trialToneFreq',
+            'trialAMNoiseFreq',
+            'trialSoundArray',
+        ):
+            setattr(self, attr, h5[attr][()])
+        self.frameTimes = np.concatenate(([0],np.cumsum(h5['frameIntervals'][:])))
+    
+
+class RFTrials(PropertyDict):
+    """All property getters without a leading underscore will be
+    considered nwb trials columns. Their docstrings will become the column
+    `description`.
+    
+    To add trials to a pynwb.NWBFile:
+    
+    >>> obj = RFTrials("DRpilot_626791_20220817") # doctest: +SKIP
+    
+    >>> for column in obj.to_add_trial_column(): # doctest: +SKIP
+    ...    nwb_file.add_trial_column(**column)
+        
+    >>> for trial in obj.to_add_trial(): # doctest: +SKIP
+    ...    nwb_file.add_trial(**trial)
+        
+    """
+    
+    _data: utils.DRDataLoader
+    
+            
+    def __init__(self, session: str | pathlib.Path | np_session.Session, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._data = utils.DRDataLoader(session) # session is stored in obj
+        if not self._data.rf_hdf5:
+            raise FileNotFoundError(f'No RF mapping hdf5 found in {session.npexp_path}')
+        self._sam = TrialsObj(self._data.rf)
+        
+    def get_display_times(self, frame_idx: Sequence[float]):
+        return np.array(self._data.rf_frametimes)[frame_idx]
+
+    def get_script_times(self, frame_idx: Sequence[float]):
+        """Times of psychopy script 'frames' relative to start of sync"""
+        return self._first_vsync_time + self._sam.frameTimes[frame_idx]
+    
+    @property
+    def _first_vsync_time(self) -> float:
+        # TODO update to use rising edge, or subtract avg (falling - rising)
+        return self._data.vsync_time_blocks.rf[0]
+    
+    @property
+    def _h5(self) -> h5py.File:
+        return self._data.rf
+    
+    @property
+    def start_time(self) -> Sequence[float]:
+        return self.get_script_times(
+            self._sam.stimStartFrame
+        )
+        
+    @property
+    def stim_start_time(self) -> Sequence[float]:
+        """Onset of visual or auditory stimulus."""
+        starts = np.nan * np.ones_like(self.start_time)
+        for idx in range(len(self.start_time)):
+            if self.is_vis_stim[idx]:
+                starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
+            if self.is_aud_stim[idx]:
+                # TODO get corrected aud offset
+                starts[idx] = self.get_script_times(self._sam.stimStartFrame[idx])
+        return starts
+
+    @property
+    def stim_stop_time(self) -> Sequence[float]:
+        """Onset of visual or auditory stimulus."""
+        starts = np.nan * np.ones_like(self.start_time)
+        for idx in range(len(self.start_time)):
+            if self.is_vis_stim[idx]:
+                starts[idx] = self.get_display_times(
+                    self._sam.stimStartFrame[idx]
+                    + self._sam.stimFrames
+                    + 1
+                    )
+            if self.is_aud_stim[idx]:
+                # TODO get corrected aud offset
+                starts[idx] = self.get_script_times(
+                    self._sam.stimStartFrame[idx]
+                    + self._sam.stimFrames
+                    + 1
+                    )
+        return starts
+    
+    @property
+    def stop_time(self) -> Sequence[float]:
+        """Latest time in each trial, after all events have occurred."""
+        return self.get_script_times(
+            self._sam.stimStartFrame 
+            + self._sam.stimFrames
+            + self._sam.interStimFrames
+        )
+
+    @property
+    def grating_x_pos(self) -> Sequence[tuple[float, float]]:
+        return np.array([xy[0] for xy in self._sam.trialVisXY])
+    
+    @property
+    def grating_y_pos(self) -> Sequence[tuple[float, float]]:
+        return np.array([xy[1] for xy in self._sam.trialVisXY])
+    
+    @property
+    def full_field_contrast(self) -> Sequence[float]:
+        return self._sam.trialFullFieldContrast
+    
+    @property
+    def grating_orientation(self) -> Sequence[float]:
+        return self._sam.trialGratingOri
+    
+    @property
+    def tone_freq(self) -> Sequence[float]:
+        return self._sam.trialToneFreq
+    
+    @property
+    def am_noise_freq(self) -> Sequence[float]:
+        return self._sam.trialAMNoiseFreq
+    
+    @property
+    def is_vis_stim(self) -> Sequence[bool]:
+        return ~np.isnan(self.grating_orientation)
+    
+    @property
+    def is_aud_stim(self) -> Sequence[bool]:
+        """Includes AM noise and pure tones."""
+        return np.isnan(self.grating_orientation)
+    
+    @property
+    def is_aud_noise_stim(self) -> Sequence[bool]:
+        return ~np.isnan(self.am_noise_freq)
+    
+    @property
+    def is_aud_tone_stim(self) -> Sequence[bool]:
+        return ~np.isnan(self.tone_freq)
+    
 def main(
     session: interfaces.SessionFolder,
     nwb_file: interfaces.OptionalInputFile = None,
@@ -796,13 +721,32 @@ def main(
     for trial in obj.to_add_trial():
         nwb_file.add_trial(**trial)
     
+    if obj._data.rf_hdf5:
+        
+        rf_mapping = pynwb.epoch.TimeIntervals(
+            name="rf_mapping",
+            description="Intervals for each receptive-field mapping trial",
+        )
+        
+        obj = RFTrials(session)
+        
+        for column in obj.to_add_trial_column():
+            rf_mapping.add_column(**column)
+        
+        for trial in obj.to_add_trial():
+            rf_mapping.add_row(**trial)
+        
+        nwb_file.add_time_intervals(rf_mapping)
+    # TODO add timeseries
     return nwb_file
 
 if __name__ == "__main__":
     doctest.testmod()
-    # nwb_file = main('DRpilot_626791_20220817')
-
     
+    nwb_file = main('DRpilot_644864_20230131')
+
+    x = RFTrials("DRpilot_644864_20230201")
+    df = x.to_dataframe()
     x = DRTaskTrials("DRpilot_626791_20220817")
     x.repeat_number
     
