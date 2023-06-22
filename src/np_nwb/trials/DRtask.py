@@ -28,6 +28,24 @@ from np_nwb.trials.property_dict import PropertyDict
 logger = np_logging.getLogger(__name__)
 
 
+def check_array_indices(frame_idx: int | float | Sequence[int | float]) -> Sequence[int | float]:
+    """Check indices can be safely converted from float to int. Make
+    a single int/float index iterable."""
+    try:
+        _ = len(frame_idx)
+    except TypeError:
+        frame_idx = (frame_idx,)
+        
+    for idx in frame_idx:
+        if (
+            isinstance(idx, (float, np.floating))
+            and not np.isnan(idx)
+            and int(idx) != idx
+        ):
+            raise TypeError('Non-integer `float` used as an index')
+    return frame_idx
+
+
 class DRTaskTrials(PropertyDict):
     """All property getters without a leading underscore will be
     considered nwb trials columns. Their docstrings will become the column
@@ -51,13 +69,23 @@ class DRTaskTrials(PropertyDict):
         super().__init__(*args, **kwargs)
         self._data = utils.DRDataLoader(session) # session is stored in obj
         
-    def get_display_times(self, frame_idx: Sequence[float]):
+    def get_display_times(self, frame_idx: int | Sequence[float]):
+        frame_idx = check_array_indices(frame_idx)
         return np.array(self._data.task_frametimes)[frame_idx]
 
-    def get_script_times(self, frame_idx: Sequence[float]):
+
+    def get_script_times(self, frame_idx: int | float | Sequence[int | float]):
         """Times of psychopy script 'frames' relative to start of sync"""
-        # TODO pull from nans if frame_idx is nan
-        return self._first_vsync_time + self._sam.frameTimes[frame_idx]
+        frame_idx = check_array_indices(frame_idx)
+        return np.array(
+            [
+            self._first_vsync_time + self._sam.frameTimes[int(idx)]
+            if not np.isnan(idx)
+            else np.nan
+            for idx in frame_idx
+            ]
+        )
+
     
     # ---------------------------------------------------------------------- #
     # helper-properties that won't become columns:
@@ -79,6 +107,14 @@ class DRTaskTrials(PropertyDict):
     @property
     def _h5(self) -> h5py.File:
         return self._data.task
+    
+    @property
+    def _len(self) -> int:
+        """Number of trials, cached"""
+        with contextlib.suppress(AttributeError):
+            return self._length
+        self._length = len(self.start_time)
+        return self._len
     
     @property
     def _aud_stims(self) -> Sequence[str]:
@@ -119,10 +155,12 @@ class DRTaskTrials(PropertyDict):
     def start_time(self) -> Sequence[float]:
         """Earliest time in each trial, before any events occur.
         
-        - currently discards inter-trial period and any quiescent violations
+        - currently discards inter-trial period
+        - extensions due to quiescent violations are discarded: only the final
+          `preStimFramesFixed` before a stim are included 
         """
         return self.get_script_times(
-            self._sam.stimStartFrame - self._h5['preStimFramesFixed'][()]  - self._h5['quiescentFrames'][()]
+            self._sam.stimStartFrame - self._h5['preStimFramesFixed'][()]
         )
 
     @property
@@ -153,30 +191,38 @@ class DRTaskTrials(PropertyDict):
         )
         
     @property
+    def response_time(self) -> Sequence[float]:
+        """Time of first lick in the response window, or NaN if no lick occurred."""
+        return self.get_script_times(
+            self._h5['trialResponseFrame'][()]
+        )
+        
+    
+    @property
     def opto_start_time(self) -> Sequence[float]:
         """Onset of optogenetic inactivation."""
         if not self._has_opto:
-            return np.nan * np.ones_like(self.start_time)
+            return np.nan * np.ones(self._len)
         return np.where(
             ~np.isnan(self._sam.trialOptoOnsetFrame), 
             self.get_script_times(
                 self._sam.stimStartFrame + self._sam.trialOptoOnsetFrame
             ),
-            np.nan * np.ones_like(self.start_time),
+            np.nan * np.ones(self._len),
         )
 
     @property
     def opto_stop_time(self) -> Sequence[float]:
         """Offset of optogenetic inactivation."""
         if not self._has_opto:
-            return np.nan * np.ones_like(self.start_time)
+            return np.nan * np.ones(self._len)
         return self.opto_start_time + self._sam.trialOptoDur
     
     @property
     def stim_start_time(self) -> Sequence[float]:
         """Onset of visual or auditory stimulus."""
-        starts = np.nan * np.ones_like(self.start_time)
-        for idx in range(len(self.start_time)):
+        starts = np.nan * np.ones(self._len)
+        for idx in range(self._len):
             if self.is_vis_stim[idx]:
                 starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
             if self.is_catch[idx]:
@@ -189,8 +235,8 @@ class DRTaskTrials(PropertyDict):
     @property
     def stim_stop_time(self) -> Sequence[float]:
         """TODO"""
-        ends = np.nan * np.ones_like(self.start_time)
-        for idx in range(len(self.start_time)):
+        ends = np.nan * np.ones(self._len)
+        for idx in range(self._len):
             if self.is_vis_stim[idx]:
                 ends[idx] = self.get_display_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()] + 1)
             if self.is_catch[idx]:
@@ -223,7 +269,7 @@ class DRTaskTrials(PropertyDict):
     def timeout_start_time(self) -> Sequence[float]:
         """"""
         starts = np.nan * np.ones_like((self.start_time))
-        for idx in range(0, len(self.start_time) - 1):
+        for idx in range(0, self._len - 1):
             if self.is_repeat[idx + 1]:
                 starts[idx] = self.get_display_times(
                     self._sam.stimStartFrame[idx] + self._h5['postResponseWindowFrames'][()] + 1
@@ -234,7 +280,7 @@ class DRTaskTrials(PropertyDict):
     def timeout_stop_time(self) -> Sequence[float]:
         """"""
         ends = np.nan * np.ones_like((self.start_time))
-        for idx in range(0, len(self.start_time) - 1):
+        for idx in range(0, self._len - 1):
             if self.is_repeat[idx + 1]:
                 ends[idx] = self.get_display_times(
                     self._sam.stimStartFrame[idx] + self._h5['postResponseWindowFrames'][()] + self._sam.incorrectTimeoutFrames + 1
@@ -245,7 +291,7 @@ class DRTaskTrials(PropertyDict):
     @property
     def _time(self) -> Sequence[float]:
         """TODO"""
-        return np.nan * np.zeros_like(self.start_time)
+        return np.nan * np.zeros(self._len)
     '''
 
     @property
@@ -267,7 +313,6 @@ class DRTaskTrials(PropertyDict):
         """0-indexed stim number, randomized over trials.
         
         - refers to `nwb.stimulus.templates` table
-        - nan for aborted trials
         - nan for catch trials
         """
         # TODO link to stimulus table 
@@ -286,36 +331,23 @@ class DRTaskTrials(PropertyDict):
         return np.array([name[:-1] for name in self._trial_rewarded_stim_name])
     
     @property
-    def index_all(self) -> Sequence[int]:
-        """0-indexed trial number, increments over time.
-        
-        - includes aborted trials
-        - includes catch trials
-        """
-        return np.arange(len(self.start_time))
-    
-    @property
     def index(self) -> Sequence[int]:
         """0-indexed trial number for regular trials (with stimuli), increments over
         time.
         
         - nan for catch trials
-        - nan for aborted trials
         """
-        regular_trial_index = np.nan * np.zeros_like(self.start_time)
+        regular_trial_index = np.nan * np.zeros(self._len)
         counter = 0
-        for idx in range(len(self.start_time)):
-            if not (self.is_catch[idx] or self.is_aborted[idx]):
+        for idx in range(self._len):
+            if not self.is_catch[idx]:
                 regular_trial_index[idx] = int(counter)
                 counter += 1
         return regular_trial_index
     
     @property
     def index_within_block(self) -> Sequence[int]:
-        """0-indexed trial number within a block, increments over the block.
-        
-        # TODO aborted trials not tracked
-        """
+        """0-indexed trial number within a block, increments over the block."""
         return np.concatenate([np.arange(count) for count in np.unique(self.block_index, return_counts=True)[1]])
     
     @property
@@ -325,13 +357,13 @@ class DRTaskTrials(PropertyDict):
          - changed from 'noncontingent_reward_index_within_block'
          - autoreward scheduled, not necessarily given
         """
-        return np.where(self.is_reward_scheduled == True, self.index_within_block, np.nan * np.ones_like(self.index_within_block))
+        return np.where(self.is_reward_scheduled == True, self.index_within_block, np.nan * np.ones(self._len))
 
     @property
     def opto_area_name(self) -> Sequence[str]:
         """Target location for optogenetic inactivation during the trial."""
         # TODO
-        return np.nan * np.ones_like(self.is_opto)
+        return np.nan * np.ones(self._len)
     
     @property
     def opto_area_index(self) -> Sequence[int | float]:
@@ -340,18 +372,16 @@ class DRTaskTrials(PropertyDict):
         - nan if no opto applied
         """
         # TODO
-        return np.nan * np.ones_like(self.is_opto)
+        return np.nan * np.ones(self._len)
     
     @property
     def repeat_number(self) -> Sequence[float]:
         """Number of times the trial has already been presented in immediately
         preceding trials (repeated due to false alarm).
         
-        - nan for aborted trials
         - nan for catch trials
         """
-        zeros = np.zeros_like(self.index)
-        repeats = np.where(np.isnan(self.index), zeros, np.nan * zeros)
+        repeats = np.where(~np.isnan(self.index), np.zeros(self._len), np.full(self._len, np.nan))
         counter = 0
         for idx in np.where(repeats == 0)[0]:
             if self.is_repeat[idx]:
@@ -375,7 +405,6 @@ class DRTaskTrials(PropertyDict):
         training.
         
         - includes catch trials
-        - excludes aborted trials
         """
         return self.is_hit | self.is_correct_reject | (self.is_catch & ~self.is_response)
     
@@ -385,7 +414,6 @@ class DRTaskTrials(PropertyDict):
         training.
         
         - includes catch trials
-        - excludes aborted trials
         """
         return self.is_miss | self.is_false_alarm | (self.is_catch & self.is_response)
     
@@ -518,19 +546,9 @@ class DRTaskTrials(PropertyDict):
         miss.
         
         - always False on first full trial after context block switch
-        - False for all aborted trials
         - False for catch trials
         """
         return self._sam.trialRepeat
-    
-    @property
-    def is_aborted(self) -> Sequence[bool]:
-        """The subject licked one or more times during the quiescent period.
-        
-        - trial ends at quiescent period stop time
-        # TODO
-        """
-        return np.zeros_like(self._sam.trialStartTimes, dtype=bool)
     
     @property
     def is_opto(self) -> Sequence[bool]:
@@ -539,10 +557,7 @@ class DRTaskTrials(PropertyDict):
     
     @property
     def is_context_switch(self) -> Sequence[bool]:
-        """The first trial with a stimulus after a change in context.
-        
-        - excludes aborted trials
-        """
+        """The first trial with a stimulus after a change in context."""
         return np.isin(self.index_within_block, 1)
     
     """
@@ -551,24 +566,6 @@ class DRTaskTrials(PropertyDict):
         """"""
         return 
     """
-    
-    
-class TrialsObj:
-    def __init__(self, h5: h5py.File):
-        self._h5 = h5
-        for attr in (
-            'stimFrames',
-            'interStimFrames',
-            'stimStartFrame',
-            'trialFullFieldContrast',
-            'trialVisXY',
-            'trialGratingOri',
-            'trialToneFreq',
-            'trialAMNoiseFreq',
-            'trialSoundArray',
-        ):
-            setattr(self, attr, h5[attr][()])
-        self.frameTimes = np.concatenate(([0],np.cumsum(h5['frameIntervals'][:])))
     
 
 class RFTrials(PropertyDict):
@@ -589,22 +586,30 @@ class RFTrials(PropertyDict):
     """
     
     _data: utils.DRDataLoader
-    
             
     def __init__(self, session: str | pathlib.Path | np_session.Session, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._data = utils.DRDataLoader(session) # session is stored in obj
         if not self._data.rf_hdf5:
             raise FileNotFoundError(f'No RF mapping hdf5 found in {session.npexp_path}')
-        self._sam = TrialsObj(self._data.rf)
+        self._frame_times = np.concatenate(([0], np.cumsum(self._h5['frameIntervals'][:])))
         
-    def get_display_times(self, frame_idx: Sequence[float]):
+    def get_display_times(self, frame_idx: int | Sequence[float]):
+        frame_idx = check_array_indices(frame_idx)
         return np.array(self._data.rf_frametimes)[frame_idx]
 
     def get_script_times(self, frame_idx: Sequence[float]):
         """Times of psychopy script 'frames' relative to start of sync"""
-        return self._first_vsync_time + self._sam.frameTimes[frame_idx]
-    
+        frame_idx = check_array_indices(frame_idx)
+        return np.array(
+            [
+            self._first_vsync_time + self._frame_times[int(idx)]
+            if not np.isnan(idx) 
+            else np.nan
+            for idx in frame_idx
+            ]
+        )    
+        
     @property
     def _first_vsync_time(self) -> float:
         # TODO update to use rising edge, or subtract avg (falling - rising)
@@ -615,40 +620,45 @@ class RFTrials(PropertyDict):
         return self._data.rf
     
     @property
+    def _len(self) -> int:
+        """Number of trials, cached"""
+        with contextlib.suppress(AttributeError):
+            return self._length
+        self._length = len(self.start_time)
+        return self._len
+    
+    @property
     def start_time(self) -> Sequence[float]:
         return self.get_script_times(
-            self._sam.stimStartFrame
+            self._h5['stimStartFrame'][()]
         )
         
     @property
     def stim_start_time(self) -> Sequence[float]:
         """Onset of visual or auditory stimulus."""
-        starts = np.nan * np.ones_like(self.start_time)
-        for idx in range(len(self.start_time)):
+        starts = np.nan * np.ones(self._len)
+        for idx in range(self._len):
             if self.is_vis_stim[idx]:
-                starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
+                starts[idx] = self.get_display_times(self._h5['stimStartFrame'][idx])
             if self.is_aud_stim[idx]:
                 # TODO get corrected aud offset
-                starts[idx] = self.get_script_times(self._sam.stimStartFrame[idx])
+                starts[idx] = self.get_script_times(self._h5['stimStartFrame'][idx])
         return starts
 
     @property
     def stim_stop_time(self) -> Sequence[float]:
         """Onset of visual or auditory stimulus."""
-        starts = np.nan * np.ones_like(self.start_time)
-        for idx in range(len(self.start_time)):
+        starts = np.nan * np.ones(self._len)
+        frames_per_stim = self._h5['stimFrames'][()]
+        for idx in range(self._len):
             if self.is_vis_stim[idx]:
                 starts[idx] = self.get_display_times(
-                    self._sam.stimStartFrame[idx]
-                    + self._sam.stimFrames
-                    + 1
+                    self._h5['stimStartFrame'][idx] + frames_per_stim + 1
                     )
             if self.is_aud_stim[idx]:
                 # TODO get corrected aud offset
                 starts[idx] = self.get_script_times(
-                    self._sam.stimStartFrame[idx]
-                    + self._sam.stimFrames
-                    + 1
+                    self._h5['stimStartFrame'][idx] + frames_per_stim + 1
                     )
         return starts
     
@@ -656,34 +666,34 @@ class RFTrials(PropertyDict):
     def stop_time(self) -> Sequence[float]:
         """Latest time in each trial, after all events have occurred."""
         return self.get_script_times(
-            self._sam.stimStartFrame 
-            + self._sam.stimFrames
-            + self._sam.interStimFrames
+            self._h5['stimStartFrame'][()] 
+            + self._h5['stimFrames'][()]
+            + self._h5['interStimFrames'][()]
         )
 
     @property
-    def grating_x_pos(self) -> Sequence[tuple[float, float]]:
-        return np.array([xy[0] for xy in self._sam.trialVisXY])
+    def grating_x_pos(self) -> Sequence[float]:
+        return np.array([xy[0] for xy in self._h5['trialVisXY'][()]])
     
     @property
-    def grating_y_pos(self) -> Sequence[tuple[float, float]]:
-        return np.array([xy[1] for xy in self._sam.trialVisXY])
+    def grating_y_pos(self) -> Sequence[float]:
+        return np.array([xy[1] for xy in self._h5['trialVisXY'][()]])
     
     @property
     def full_field_contrast(self) -> Sequence[float]:
-        return self._sam.trialFullFieldContrast
+        return self._h5['trialFullFieldContrast'][()] if 'trialFullFieldContrast' in self._h5 else np.nan * np.ones(self._len)
     
     @property
     def grating_orientation(self) -> Sequence[float]:
-        return self._sam.trialGratingOri
+        return self._h5['trialGratingOri'][()] 
     
     @property
     def tone_freq(self) -> Sequence[float]:
-        return self._sam.trialToneFreq
+        return self._h5['trialToneFreq'][()] if 'trialToneFreq' in self._h5 else np.nan * np.ones(self._len)
     
     @property
     def am_noise_freq(self) -> Sequence[float]:
-        return self._sam.trialAMNoiseFreq
+        return self._h5['trialAMNoiseFreq'][()] if 'trialAMNoiseFreq' in self._h5 else np.nan * np.ones(self._len)
     
     @property
     def is_vis_stim(self) -> Sequence[bool]:
@@ -737,28 +747,30 @@ def main(
             rf_mapping.add_row(**trial)
         
         nwb_file.add_time_intervals(rf_mapping)
-    # TODO add timeseries
+    # TODO add timeseries to link?
     return nwb_file
 
 if __name__ == "__main__":
     doctest.testmod()
+    # x = DRTaskTrials("DRpilot_644864_20230201")
+    # tuple(x.keys())
     
-    nwb_file = main('DRpilot_644864_20230131')
-
-    x = RFTrials("DRpilot_644864_20230201")
-    df = x.to_dataframe()
-    x = DRTaskTrials("DRpilot_626791_20220817")
-    x.repeat_number
+    # nwb_file = main('DRpilot_644864_20230131')
     
-    import np_tools
-    nwb = np_tools.init_nwb(x._data.session)
-    for column in x.to_add_trial_column():
-        nwb.add_trial_column(**column)
-    for trial in x.to_add_trial():
-        nwb.add_trial(**trial)
+    # x = RFTrials("DRpilot_644864_20230201")
+    # df = x.to_dataframe()
+    # x = DRTaskTrials("DRpilot_626791_20220817")
+    # x.repeat_number
+    
+    # import np_tools
+    # nwb = np_tools.init_nwb(x._data.session)
+    # for column in x.to_add_trial_column():
+    #     nwb.add_trial_column(**column)
+    # for trial in x.to_add_trial():
+    #     nwb.add_trial(**trial)
         
-    import yaml
-    pathlib.Path('test.yaml').write_text(
-        yaml.dump(x._docstrings, line_break='\n')
-        )
+    # import yaml
+    # pathlib.Path('test.yaml').write_text(
+    #     yaml.dump(x._docstrings, line_break='\n')
+    #     )
     
