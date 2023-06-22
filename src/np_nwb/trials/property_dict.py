@@ -34,8 +34,8 @@ class PropertyDict(collections.abc.Mapping):
     @property
     def _properties(self) -> tuple[str, ...]:
         """Names of properties without leading underscores. No methods."""
-        dict_attrs = dir(collections.abc.Mapping)
-        no_dict_attrs = (attr for attr in dir(self) if attr not in dict_attrs)
+        dict_attrs = collections.abc.Mapping.__dict__.keys()
+        no_dict_attrs = (attr for attr in self.__class__.__dict__.keys() if attr not in dict_attrs)
         no_leading_underscore = (attr for attr in no_dict_attrs if attr[0] != '_')
         no_functions = (attr for attr in no_leading_underscore if not hasattr(getattr(self, attr), '__call__'))
         return tuple(no_functions)
@@ -128,7 +128,7 @@ class TestPropertyDict(PropertyDict):
     True
     
     >>> obj._docstrings
-    {'no_docstring': '', 'visible_property_getter': 'Docstring available'}
+    {'visible_property_getter': 'Docstring available', 'no_docstring': ''}
     """
     
     visible_property = True
