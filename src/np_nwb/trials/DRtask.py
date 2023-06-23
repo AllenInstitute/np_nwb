@@ -551,7 +551,7 @@ class DRTaskTrials(PropertyDict):
     @property
     def is_opto(self) -> Sequence[bool]:
         """Optogenetic inactivation was applied during the trial."""
-        return np.isnan(self.opto_start_time)
+        return ~np.isnan(self.opto_start_time)
     
     @property
     def is_context_switch(self) -> Sequence[bool]:
