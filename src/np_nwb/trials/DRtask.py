@@ -53,17 +53,21 @@ class DRTaskTrials(PropertyDict):
         
     def get_display_times(self, frame_idx: int | Sequence[float]):
         frame_idx = utils.check_array_indices(frame_idx)
-        return np.array(self._data.task_frametimes)[frame_idx]
-
+        return np.array(
+            [
+            np.nan if np.isnan(idx) 
+            else self._data.task_frametimes[int(idx)]
+            for idx in frame_idx
+            ]
+        )
 
     def get_script_times(self, frame_idx: int | float | Sequence[int | float]):
         """Times of psychopy script 'frames' relative to start of sync"""
         frame_idx = utils.check_array_indices(frame_idx)
         return np.array(
             [
-            self._first_vsync_time + self._sam.frameTimes[int(idx)]
-            if not np.isnan(idx)
-            else np.nan
+            np.nan if np.isnan(idx) 
+            else self._first_vsync_time + self._sam.frameTimes[int(idx)]
             for idx in frame_idx
             ]
         )
@@ -140,7 +144,7 @@ class DRTaskTrials(PropertyDict):
         - extensions due to quiescent violations are discarded: only the final
           `preStimFramesFixed` before a stim are included 
         """
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame - self._h5['preStimFramesFixed'][()]
         )
 
@@ -152,7 +156,7 @@ class DRTaskTrials(PropertyDict):
         - currently just the last quiescent period which was not violated
         - not tracking quiescent violations
         """
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame - self._h5['quiescentFrames'][()]
         )
     
@@ -160,21 +164,21 @@ class DRTaskTrials(PropertyDict):
     def quiescent_stop_time(self) -> Sequence[float]:
         """End of period in which the subject should not lick, otherwise the
         trial will be aborted and start over."""
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame
         )
         
     @property
     def response_window_start_time(self) -> Sequence[float]:
         """"""
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame + self._h5['responseWindow'][()][0]
         )
         
     @property
     def response_time(self) -> Sequence[float]:
         """Time of first lick in the response window, or NaN if no lick occurred."""
-        return self.get_script_times(
+        return self.get_display_times(
             self._h5['trialResponseFrame'][()]
         )
         
@@ -186,7 +190,7 @@ class DRTaskTrials(PropertyDict):
             return np.nan * np.ones(self._len)
         return np.where(
             ~np.isnan(self._sam.trialOptoOnsetFrame), 
-            self.get_script_times(
+            self.get_display_times(
                 self._sam.stimStartFrame + self._sam.trialOptoOnsetFrame
             ),
             np.nan * np.ones(self._len),
@@ -207,7 +211,7 @@ class DRTaskTrials(PropertyDict):
             if self.is_vis_stim[idx]:
                 starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
             if self.is_catch[idx]:
-                starts[idx] = self.get_script_times(self._sam.stimStartFrame[idx])
+                starts[idx] = self.get_display_times(self._sam.stimStartFrame[idx])
             if self.is_aud_stim[idx]:
                 starts[idx] = self._data.task_sound_on_off[idx][0]
         return starts
@@ -220,7 +224,7 @@ class DRTaskTrials(PropertyDict):
             if self.is_vis_stim[idx]:
                 ends[idx] = self.get_display_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()])
             if self.is_catch[idx]:
-                ends[idx] = self.get_script_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()])
+                ends[idx] = self.get_display_times(self._sam.stimStartFrame[idx] + self._h5['visStimFrames'][()])
             if self.is_aud_stim[idx]:
                 ends[idx] = self._data.task_sound_on_off[idx][1]
         return ends
@@ -228,7 +232,7 @@ class DRTaskTrials(PropertyDict):
     @property
     def response_window_stop_time(self) -> Sequence[float]:
         """"""
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame + self._h5['responseWindow'][()][1]
         )
         
@@ -240,7 +244,7 @@ class DRTaskTrials(PropertyDict):
     @property
     def post_response_window_stop_time(self) -> Sequence[float]:
         """"""
-        return self.get_script_times(
+        return self.get_display_times(
             self._sam.stimStartFrame + self._h5['postResponseWindowFrames'][()]
         )
     

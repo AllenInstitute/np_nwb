@@ -55,17 +55,21 @@ class RFTrials(PropertyDict):
         
     def get_vis_presentation_times(self, frame_idx: int | Sequence[float]):
         frame_idx = utils.check_array_indices(frame_idx)
-        return np.array(self._data.rf_frametimes)[frame_idx]
-    
+        return np.array(
+            [
+            np.nan if np.isnan(idx)
+            else self._data.rf_frametimes[int(idx)]
+            for idx in frame_idx
+            ]
+        )    
         
     def get_script_times(self, frame_idx: Sequence[float]):
         """Times of psychopy script 'frames' relative to start of sync"""
         frame_idx = utils.check_array_indices(frame_idx)
         return np.array(
             [
-            self._first_vsync_time + self._frame_times[int(idx)]
-            if not np.isnan(idx) 
-            else np.nan
+            np.nan if np.isnan(idx)
+            else self._first_vsync_time + self._frame_times[int(idx)]
             for idx in frame_idx
             ]
         )    
@@ -88,7 +92,7 @@ class RFTrials(PropertyDict):
     
     @property
     def start_time(self) -> Sequence[float]:
-        return self.get_script_times(
+        return self.get_vis_presentation_times(
             self._h5['stimStartFrame'][()]
         )
         
@@ -121,7 +125,7 @@ class RFTrials(PropertyDict):
     @property
     def stop_time(self) -> Sequence[float]:
         """Latest time in each trial, after all events have occurred."""
-        return self.get_script_times(
+        return self.get_vis_presentation_times(
             self._h5['stimStartFrame'][()] 
             + self._h5['stimFrames'][()]
             + self._h5['interStimFrames'][()]
