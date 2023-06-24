@@ -340,19 +340,19 @@ class DRTaskTrials(PropertyDict):
         return np.where(self.is_reward_scheduled == True, self.index_within_block, np.nan * np.ones(self._len))
 
     @property
-    def opto_area_name(self) -> Sequence[str]:
+    def TODO_opto_area_name(self) -> Sequence[str]:
         """Target location for optogenetic inactivation during the trial."""
         # TODO
-        return self._sam.trial
+        return np.full(self._len, np.nan)
     
     @property
-    def opto_area_index(self) -> Sequence[int | float]:
+    def TODO_opto_area_index(self) -> Sequence[int | float]:
         """Target location for optogenetic inactivation during the trial.
         
         - nan if no opto applied
         """
         # TODO
-        return np.nan * np.ones(self._len)
+        return np.full(self._len, np.nan)
     
     @property
     def opto_voltage(self):
@@ -388,7 +388,7 @@ class DRTaskTrials(PropertyDict):
                 counter = 0
             repeats[idx] = int(counter)
         return repeats
-
+    
     # ---------------------------------------------------------------------- #
     # bools:
     
