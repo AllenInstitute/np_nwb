@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import doctest
+import itertools
 import pathlib
 import sys
 from typing import Optional
@@ -12,14 +13,17 @@ import np_logging
 import np_tools
 import np_session
 import pynwb
-from np_probes.probes_to_nwb import add_to_nwb as probes_and_units
+import np_probes.probes_to_nwb as probes_and_units_and_lfp
 import numpy as np
+from hdmf.backends.hdf5 import h5_utils
+import ndx_events
 
 import np_nwb.metadata.from_np_session as metadata
 import np_nwb.dynamic_routing.utils as DR_utils
 import np_nwb.dynamic_routing.running as running
+import np_nwb.trials.DRtask as task_trials
+import np_nwb.trials.RFtrials as rf_trials
 import np_nwb.utils as utils
-import ndx_events
 
 
 logger = np_logging.getLogger(__name__)
@@ -47,6 +51,10 @@ def main(
         np_session.Session(session_folder), nwb_file
     )
     
+    # !trials/intervals should be added last in case timeseries need to be linked
+    nwb_file = task_trials.main(session, nwb_file)
+    nwb_file = rf_trials.main(session, nwb_file)
+    
     nwb_file = running.main(session, nwb_file)
     
     lick_times = utils.get_sync_dataset(session).get_rising_edges('lick_sensor', units='seconds')
@@ -58,13 +66,53 @@ def main(
     )
     nwb_file.add_acquisition(lick_nwb_data)
     
-    nwb_file = probes_and_units(session.npexp_path, nwb_file)
+    ecephys_module = nwb_file.create_processing_module(
+        name="ecephys", description="processed extracellular electrophysiology data"
+    )
     
-    import np_nwb.trials.DRtask as task_trials
+    link_lfp = False
+    nwb_file, lfp_files = probes_and_units_and_lfp.add_to_nwb(session.npexp_path, nwb_file)
     
-    nwb_file = task_trials.main(nwb_file)
+    open_files = {}
+    # manager = pynwb.get_manager()
+    for probe in lfp_files:
+        lfp_file = output_file.parent / f'{session}_LFP_{probe}.nwb'
+        # np_tools.save_nwb(lfp_files[probe], lfp_file)
+        
+
+        if link_lfp:
+            open_files[probe] = pynwb.NWBHDF5IO(lfp_file, "r")
+            io = open_files[probe].read()
+            
+            linked_lfp_name = next((key for key in itertools.chain(io.acquisition, io.processing) if "lfp" in key), None)
+            
+            # if linked_lfp_name:
+            #     ecephys_module.add(io.acquisition.get(linked_lfp_name) or io.processing.get(linked_lfp_name))
+            
+            linked_lfp = io.acquisition.get(linked_lfp_name) or io.processing.get(linked_lfp_name)
+            linked_electrical_series = linked_lfp[linked_lfp_name].get_electrical_series()
+            lfp_electrical_series = pynwb.ecephys.ElectricalSeries(
+                name="ElectricalSeries",
+                data=h5_utils.H5DataIO(data=linked_electrical_series.data, link_data=True),
+                electrodes=pynwb.core.DynamicTable('electrodes', description=linked_electrical_series.electrodes.description, data=h5_utils.H5DataIO(linked_electrical_series.electrodes.data, link_data=True)), # TODO find corresponding electrodes in main nwb
+                timestamps=h5_utils.H5DataIO(data=linked_electrical_series.timestamps, link_data=True),
+            )
+            lfp = pynwb.ecephys.LFP(electrical_series=lfp_electrical_series, name=probe)
+            ecephys_module.add(lfp)
     
-    np_tools.save_nwb(nwb_file, output_file)
+    
+    # use the same manager instance used to open the linked lfp
+    if link_lfp:
+        with pynwb.NWBHDF5IO(output_file, "w") as io:
+            io.write(nwb_file, link_data=True)
+            
+        for io in open_files.values():
+            io.close()
+    else:
+        np_tools.save_nwb(nwb_file, output_file)
+        
+
+    ####
 
     return nwb_file
 
