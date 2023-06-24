@@ -420,6 +420,7 @@ class DRDataLoader:
         with contextlib.suppress(AttributeError):
             return self._frame_display_time_blocks
             
+        vsync_falling_edges_in_blocks = self.vsync_time_blocks  
         diode_rising_edges: Sequence[float] = self.sync.get_rising_edges('stim_photodiode', units = 'seconds')
         diode_falling_edges: Sequence[float] = self.sync.get_falling_edges('stim_photodiode', units = 'seconds')
         assert abs(len(diode_rising_edges) - len(diode_falling_edges)) < 2
@@ -438,7 +439,7 @@ class DRDataLoader:
         )
         
         diode_times_in_blocks = {}
-        for block, vsyncs, rising, falling in zip(self.Times._fields, self.vsync_time_blocks, diode_rising_edges_in_blocks, diode_falling_edges_in_blocks):
+        for block, vsyncs, rising, falling in zip(self.Times._fields, vsync_falling_edges_in_blocks, diode_rising_edges_in_blocks, diode_falling_edges_in_blocks):
             
             if vsyncs is None:
                 continue
@@ -772,7 +773,7 @@ def get_sync_file_frame_times(
     assert all(label in output for label in labels)
     return output
 
-def get_sync_messages_text(session):
+def get_sync_messages_text(session) -> pathlib.Path:
     for raw_folder in np_tools.get_raw_ephys_subfolders(session.npexp_path):
         for record_node_folder in raw_folder.glob('Record Node*'):
             largest_recording_folder = np_tools.get_single_oebin_path(record_node_folder).parent
@@ -923,7 +924,7 @@ def get_ephys_timing_on_sync(
     
     
 if __name__=="__main__":
-    x = DRDataLoader('DRpilot_644864_20230201')
+    x = DRDataLoader('DRpilot_626791_20220817')
     x.get_trial_sound_stim_times()
     x.sound_lags
     # doctest.testmod()
