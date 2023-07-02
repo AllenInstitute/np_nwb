@@ -5,7 +5,7 @@ import dataclasses
 import datetime
 import doctest
 import pathlib
-from typing import Any, Iterable, Literal, Optional, Sequence, Union
+from typing import Any, Iterable, Iterator, Literal, Optional, Sequence, Union
 import typing
 import uuid
 
@@ -61,7 +61,7 @@ class JsonNwbMetadataDB(typing.MutableMapping):
     def __delitem__(self, key: str | int) -> None:
         raise NotImplementedError
     
-    def __iter__(self) -> typing.Iterator[str | int]:
+    def __iter__(self) -> Iterator[str]:
         return iter(path.stem for path in self.root.iterdir())
     
     def __len__(self) -> int:
@@ -81,10 +81,37 @@ class JsonNwbMetadataDB(typing.MutableMapping):
     
 class GithubJsonMetadataDB(JsonNwbMetadataDB):
     """
-    >>> GithubJsonMetadataDB().get('DRpilot_626791_20220817').subject.species
+    >>> GithubJsonMetadataDB()['DRpilot_626791_20220817'].session.session_start_time
+    datetime.datetime(2022, 8, 17, 13, 24, 54)
+    >>> GithubJsonMetadataDB().get('DRpilot_626791_20220817').subject.subject_id
+    '626791'
     """
-    # root = upath.UPath('http://github.com/alleninstitute/np_nwb/blob/main/db/json')
-    root = upath.UPath('github://alleninstitute:np_nwb@main/') / 'db' / 'json'
+    root = upath.UPath('https://github.com/AllenInstitute/np_nwb/tree/main/db/json')
+    raw_root = upath.UPath('https://raw.githubusercontent.com/AllenInstitute/np_nwb/main/db/json')
+    # currently (July 2023) UPath's github implementation isn't completely
+    # implemented - we can just use http for now, with some manual switching
+    # - to glob/iterate over folders and find files, need to use `github.com`
+    # - to read file contents, need to switch path to `raw.githubusercontent.com` 
+        
+    def __setitem__(self, key: str | int, metadata: base.NwbMetadata) -> None:
+        raise NotImplementedError
     
+    def __getitem__(self, key: str | int) -> base.NwbMetadata:
+        path = self.root / str(key)
+        if not next(path.iterdir(), None):
+            raise KeyError(key)
+        interval_paths = path.glob('intervals/*.json')
+        raw_path = self.raw_root / str(key) # for reading files
+        return base.NwbMetadata(
+            subject=validated.Subject.parse_raw((raw_path / 'subject.json').read_bytes()),
+            session=validated.Session.parse_raw((raw_path / 'session.json').read_bytes()),
+            intervals=tuple(validated.Intervals.parse_raw((raw_path / interval_path.relative_to(path)).read_bytes()) for interval_path in interval_paths),
+        )
+        
+    def __iter__(self) -> Iterator[str]:
+        return iter(path.stem for path in self.root.iterdir() if path.stem[0] not in '.#_' and not path.suffix)
+    
+      
+      
 if __name__ == "__main__":
     doctest.testmod()
