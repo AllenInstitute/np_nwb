@@ -1,0 +1,28 @@
+{
+    "session_start_time": "2023-02-08T16:01:11",
+    "session_id": "DRpilot_644866_20230208",
+    "session_description": "data and metadata for a Neuropixels ecephys session",
+    "lab": "Mindscope, Neural Circuits & Behavior",
+    "institution": "Allen Institute",
+    "experimenter": null,
+    "experiment_description": "dynamic routing aud/vis pilot",
+    "keywords": [
+        "go-nogo",
+        "context",
+        "routing",
+        "behavior",
+        "neuropixels",
+        "auditory",
+        "visual"
+    ],
+    "notes": null,
+    "pharmacology": null,
+    "protocol": null,
+    "related_publications": null,
+    "source_script": null,
+    "source_script_file_name": null,
+    "data_collection": null,
+    "surgery": null,
+    "virus": null,
+    "stimulus_notes": null
+}
