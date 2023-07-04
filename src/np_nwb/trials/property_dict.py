@@ -4,6 +4,7 @@ import contextlib
 import datetime
 import doctest
 import functools
+import itertools
 import pathlib
 import collections.abc
 import reprlib
@@ -34,10 +35,11 @@ class PropertyDict(collections.abc.Mapping):
     @property
     def _properties(self) -> tuple[str, ...]:
         """Names of properties without leading underscores. No methods."""
+        self_and_super_attrs = tuple(attr for cls in reversed(self.__class__.__mro__) for attr in cls.__dict__.keys())
         dict_attrs = collections.abc.Mapping.__dict__.keys()
-        no_dict_attrs = (attr for attr in self.__class__.__dict__.keys() if attr not in dict_attrs)
-        no_leading_underscore = (attr for attr in no_dict_attrs if attr[0] != '_')
-        no_functions = (attr for attr in no_leading_underscore if not hasattr(getattr(self, attr), '__call__'))
+        no_dict_attrs = tuple(attr for attr in self_and_super_attrs if attr not in dict_attrs)
+        no_leading_underscore = tuple(attr for attr in no_dict_attrs if attr[0] != '_')
+        no_functions = tuple(attr for attr in no_leading_underscore if not hasattr(getattr(self, attr), '__call__'))
         return tuple(no_functions)
     
     @property
@@ -110,10 +112,11 @@ class PropertyDict(collections.abc.Mapping):
         we'll just receive the docstring for its value's type.
         """
         cls_attr = lambda attr: getattr(self.__class__, attr)
-        regular_properties = {attr: "" for attr in self._properties if not isinstance(cls_attr(attr), property)}
-        property_getters = {attr: cls_attr(attr).__doc__ or "" for attr in self._properties if isinstance(cls_attr(attr), property)}
+        regular_properties = {attr: "" for attr in self._properties if not isinstance(cls_attr(attr), (property, functools.cached_property))}
+        property_getters = {attr: cls_attr(attr).__doc__ or "" for attr in self._properties if isinstance(cls_attr(attr), (property, functools.cached_property))}
+        fmt = lambda docstring: docstring.replace('\n', ' ').replace('  ', '').replace('.- ', '; ').replace('- ', '; ').replace(' ; ', '; ')
         return {
-            attr: cls_attr(attr).__doc__ or "" # if no docstring present, __doc__ is None
+            attr: fmt(cls_attr(attr).__doc__) if cls_attr(attr).__doc__ else "" # if no docstring present, __doc__ is None
             for attr in property_getters
         }
             
@@ -147,6 +150,15 @@ class TestPropertyDict(PropertyDict):
     def invisible_method(self): 
         """Docstring not available"""
         return True
+
+
+class TestPropertyDictInheritance(TestPropertyDict):
+    """
+    >>> obj = TestPropertyDictInheritance()
+    >>> obj
+    {'no_docstring': True, 'visible_property': True, 'visible_property_getter': True}
+    """
+    pass
 
 
 class TestPropertyDictExports(PropertyDict):
