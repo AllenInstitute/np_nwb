@@ -1,0 +1,16 @@
+{
+    "name": "visual_mapping_trials",
+    "csv": "https://raw.githubusercontent.com/AllenInstitute/np_nwb/main/db/json/DRpilot_644866_20230210/intervals/visual_mapping_trials.csv",
+    "column_names_to_descriptions": {
+        "stim_start_time": "Onset of mapping stimulus.",
+        "stim_stop_time": "Offset of mapping stimulus.",
+        "index": "",
+        "is_small_field_grating": "",
+        "grating_orientation": "",
+        "grating_x": "Position of grating patch center, in pixels from screen center",
+        "grating_y": "Position of grating patch center, in pixels from screen center",
+        "is_full_field_flash": "",
+        "flash_contrast": ""
+    },
+    "description": "visual receptive-field mapping trials"
+}

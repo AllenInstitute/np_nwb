@@ -1,6 +1,6 @@
 {
     "name": "task_trials",
-    "csv": "https://raw.githubusercontent.com/AllenInstitute/np_nwb/main/db/json/DRpilot_626791_20220815/intervals/task_trials.csv",
+    "csv": "https://raw.githubusercontent.com/AllenInstitute/np_nwb/main/db/json/DRpilot_644864_20230202/intervals/task_trials.csv",
     "column_names_to_descriptions": {
         "quiescent_start_time": "Start of period in which the subject should not lick, otherwise the trial will be aborted and start over; currently just the last quiescent period which was not violated; not tracking quiescent violations ",
         "opto_start_time": "Onset of optogenetic inactivation.",
