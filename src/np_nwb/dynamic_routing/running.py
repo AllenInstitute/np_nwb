@@ -31,9 +31,8 @@ FRAMERATE = 60
 """Visual stim f.p.s - assumed to equal running wheel sampling rate. i.e. one
 running wheel sample per camstim vsync"""
 
-UNITS: Literal['cm/s', 'm/s'] = 'cm/s'
-"""Running speed unit of measurement - NWB expects SI, but allows non-SI + a
-`conversion` scalar"""
+UNITS: Literal['cm/s', 'm/s'] = 'm/s'
+"""How to report in NWB - NWB expects SI, SDK might have previously reported cm/s"""
 
 WHEEL_RADIUS: int | float
 """Value currently assigned from hdf5 file - units correspond to `UNITS`"""
@@ -53,20 +52,12 @@ def main(
         session, nwb_file, output_file
     )
 
-    obj = DR_utils.data_from_session(session)
+    obj = utils.DRDataLoader(session)
     """Sam's DR analysis - not needed currently"""
 
     # running wheel data is recorded with camstim output, so if we have
     # multiple pkl/h5 files, we need to pool their data:
-    h5_files = []
-    for h5_prefix in ('DynamicRouting', 'RFMapping'):
-        h5_file = next(session.npexp_path.glob(f'{h5_prefix}*.hdf5'), None)
-        if not h5_file:
-            logger.warning(
-                f'No h5 file matching {h5_prefix} in {session.npexp_path}'
-            )
-            continue
-        h5_files.append(h5_file)
+    h5_files = (obj.rf_hdf5, obj.task_hdf5)
         
     running_speed, timestamps = get_running_speed_across_files(session, *h5_files, filt=None)
     filtered_running_speed, timestamps = get_running_speed_across_files(session, *h5_files, filt=lowpass_filter)
@@ -75,11 +66,11 @@ def main(
     
     raw = pynwb.TimeSeries(
             name='running',
-            description='Linear forward running speed on a rotating disk.',
+            description='linear forward running speed on a rotating disk',
             data=running_speed,
             timestamps=timestamps,
-            unit=UNITS,
-            conversion=0.01 if UNITS == 'm/s' else 1.,
+            unit='m/s',
+            conversion=100 if UNITS == 'cm/s' else 1.,
             comments=f'Assumes mouse runs at `radius = {WHEEL_RADIUS} {UNITS.split("/")[0]}` on disk.',
         )  # type: ignore
 
@@ -87,15 +78,15 @@ def main(
     
     filtered = pynwb.TimeSeries(
             name=raw.name,
-            description=f'{raw.description} Low-pass filtered at {LOWPASS_HZ} Hz with a 3rd order Butterworth filter.',
+            description=f'{raw.description} low-pass filtered at {LOWPASS_HZ} Hz with a 3rd order Butterworth filter',
             data=filtered_running_speed,
             timestamps=raw.timestamps,
-            unit=UNITS,
-            conversion=0.01 if UNITS == 'm/s' else 1.,
+            unit='m/s',
+            conversion=100 if UNITS == 'cm/s' else 1.,
         )  # type: ignore
     
     module = nwb_file.processing.get('behavior') or nwb_file.create_processing_module(
-        name="behavior", description="Processed behavioral data",
+        name="behavior", description="processed behavioral data",
         )
     # module = nwb_file.processing.get('running') or nwb_file.create_processing_module(
     #     name="running", description="Processed running speed data",
@@ -114,10 +105,11 @@ def get_running_speed_across_files(
     """Pools running speeds across files. Returns arrays of running speed and
     corresponding timestamps."""
     
-    # we need timestamps for each frame (wheel encoder is read at every vsync)
-    # sync file has 'vsyncs', but there may be multiple h5 files with encoder
-    # data per sync file (ie vsyncs are in blocks with a separating gap)
-    timestamp_blocks = utils.get_blocks_of_frame_timestamps(session)
+    # we need timestamps for each frame (wheel encoder is read before every
+    # vsync falling edge)
+    # there may be multiple h5 files with encoder
+    # data per sync file: vsyncs are in blocks with a separating gap
+    timestamp_blocks = utils.DRDataLoader(session).vsync_time_blocks
 
     running_speed = np.array([])
     timestamps = np.array([])
