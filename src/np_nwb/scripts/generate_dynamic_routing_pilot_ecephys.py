@@ -40,20 +40,19 @@ def main(
     True
     """
     session = np_session.Session(session_folder)
-    obj = DR_utils.data_from_session(session)
     
     nwb_file = np_tools.init_nwb(
         np_session.Session(session_folder),
         description='Data and metadata for a Neuropixels ecephys experiment',
     )
     nwb_file = metadata.main(session_folder, nwb_file)
-    nwb_file = eye_tracking.add_to_nwb(
-        np_session.Session(session_folder), nwb_file
-    )
     
-    # !trials/intervals should be added last in case timeseries need to be linked
-    nwb_file = task_trials.main(session, nwb_file)
-    nwb_file = rf_trials.main(session, nwb_file)
+    
+    
+    ## Remove eye-tracking for now: need to correct sync files/cam frametimes for some sessions 
+    # nwb_file = eye_tracking.add_to_nwb(
+    #     np_session.Session(session_folder), nwb_file
+    # )
     
     nwb_file = running.main(session, nwb_file)
     
@@ -62,61 +61,89 @@ def main(
     lick_nwb_data = ndx_events.Events(
         name="licks",
         timestamps=lick_times,
-        description='Times at which the subject interacted with a water spout.',
+        description='times at which the subject interacted with a water spout',
     )
     nwb_file.add_acquisition(lick_nwb_data)
+    
+    # !trials/intervals should be added last in case timeseries need to be linked
+    nwb_file = task_trials.main(session, nwb_file)
+    nwb_file = rf_trials.main(session, nwb_file)
+    
+    with_lfp = 'allen' in session.npexp_path.as_posix() # arjun hasn't run LFP sub-sampling yet for sessions on synology nas 
+    try:
+        nwb_file, lfp_files = probes_and_units_and_lfp.add_to_nwb(session.npexp_path, nwb_file, with_lfp=with_lfp)
+    except (IndexError, FileNotFoundError):
+        print(f'skipping: no sorted data found: {session}')
+        return
     
     ecephys_module = nwb_file.create_processing_module(
         name="ecephys", description="processed extracellular electrophysiology data"
     )
-    
-    link_lfp = False
-    nwb_file, lfp_files = probes_and_units_and_lfp.add_to_nwb(session.npexp_path, nwb_file)
-    
-    open_files = {}
-    # manager = pynwb.get_manager()
+    lfp_container = pynwb.ecephys.LFP()
+    ecephys_module.add(lfp_container)
+
     for probe in lfp_files:
-        lfp_file = output_file.parent / f'{session}_LFP_{probe}.nwb'
-        # np_tools.save_nwb(lfp_files[probe], lfp_file)
+        lfp_file = lfp_files[probe]
+        linked_lfp_name = next((key for key in itertools.chain(lfp_file.acquisition, lfp_file.processing) if "lfp" in key), None)
+        linked_lfp = lfp_file.acquisition.get(linked_lfp_name) or lfp_file.processing.get(linked_lfp_name)
+        linked_electrical_series = linked_lfp[linked_lfp_name].get_electrical_series()
+        existing_electrode_ids = tuple(e.index[0] for e in nwb_file.electrodes)
+        df = nwb_file.electrodes.to_dataframe()
+        electrodes = []
+        for e in linked_electrical_series.electrodes:
+            match = (
+                df[(df['probe_channel_number']==int(e.probe_channel_number)) & (df['group_name']==e.group_name.values[0])].iloc[0]
+                )
+            electrodes.append(existing_electrode_ids.index(match.name))
         
-
-        if link_lfp:
-            open_files[probe] = pynwb.NWBHDF5IO(lfp_file, "r")
-            io = open_files[probe].read()
-            
-            linked_lfp_name = next((key for key in itertools.chain(io.acquisition, io.processing) if "lfp" in key), None)
-            
-            # if linked_lfp_name:
-            #     ecephys_module.add(io.acquisition.get(linked_lfp_name) or io.processing.get(linked_lfp_name))
-            
-            linked_lfp = io.acquisition.get(linked_lfp_name) or io.processing.get(linked_lfp_name)
-            linked_electrical_series = linked_lfp[linked_lfp_name].get_electrical_series()
-            lfp_electrical_series = pynwb.ecephys.ElectricalSeries(
-                name="ElectricalSeries",
-                data=h5_utils.H5DataIO(data=linked_electrical_series.data, link_data=True),
-                electrodes=pynwb.core.DynamicTable('electrodes', description=linked_electrical_series.electrodes.description, data=h5_utils.H5DataIO(linked_electrical_series.electrodes.data, link_data=True)), # TODO find corresponding electrodes in main nwb
-                timestamps=h5_utils.H5DataIO(data=linked_electrical_series.timestamps, link_data=True),
-            )
-            lfp = pynwb.ecephys.LFP(electrical_series=lfp_electrical_series, name=probe)
-            ecephys_module.add(lfp)
+        electrode_table_region = nwb_file.create_electrode_table_region(
+            region=electrodes,
+            name='electrodes',
+            description=f"LFP channels on {probe}"
+        )
+        lfp_container.create_electrical_series(
+            name=probe, 
+            data=linked_electrical_series.data,
+            electrodes=electrode_table_region,
+            timestamps=linked_electrical_series.timestamps,
+            channel_conversion=None,
+            filtering='TODO add details of temporal, spatial sub-sampling plus any filtering',
+            conversion=1.0, # use this if we store in uV
+            comments='', 
+            description=f'sub-sampled local field potential data from Neuropixels {probe}',
+        )
     
-    
-    # use the same manager instance used to open the linked lfp
-    if link_lfp:
-        with pynwb.NWBHDF5IO(output_file, "w") as io:
-            io.write(nwb_file, link_data=True)
-            
-        for io in open_files.values():
-            io.close()
-    else:
-        np_tools.save_nwb(nwb_file, output_file)
-        
-
-    ####
-
+    np_tools.save_nwb(nwb_file, output_file)
     return nwb_file
 
 
 if __name__ == '__main__':
-    sys.argv.append('DRpilot_626791_20220817')
-    main(*utils.parse_cli_args()[::2])
+    
+    skip_existing = True
+    # if skip_existing is False:
+    #     utils.clear_cache()
+        
+    sessions = itertools.chain(*(np_session.sessions(root=dir) for dir in np_session.DRPilotSession.storage_dirs))
+    for session in sessions:
+        
+        if session.folder in (
+            'DRpilot_644864_20230202', # no sorted data
+            'DRpilot_644867_20230221', # 2 extra running datapoints
+            'DRpilot_644866_20230207', # problem getting sound offsets from pxi nidaq
+        ):
+            continue
+        
+        if 'allen' not in session.npexp_path.as_posix():
+            continue # no lfp for synology sessions - they are copied to workgroups/
+        
+        if isinstance(session, np_session.TempletonPilotSession):
+            continue
+        cache = utils.get_cache(session)
+        output_file = cache / (f'{session}.nwb')
+        if skip_existing and output_file.exists():
+            print(f'skipping: {session}')
+            continue
+        main(session, output_file)
+        
+    # sys.argv.append('DRpilot_626791_20220817')
+    # main(*utils.parse_cli_args()[::2])
