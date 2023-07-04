@@ -16,6 +16,7 @@ from typing import Any, Generator, Iterable, Iterator, Literal, NamedTuple, Opti
 import np_logging
 import np_session
 import np_tools
+import numba
 import numpy as np
 import numpy.typing as npt
 import pynwb
@@ -23,12 +24,21 @@ import pandas as pd
 import h5py
 import allensdk.brain_observatory.sync_dataset as sync_dataset
 from Analysis.DynamicRoutingAnalysisUtils import DynRoutData
+# import scipy.signal
 
 import np_nwb.interfaces as interfaces
 import np_nwb.ephys_utils as ephys_utils
 
-
 logger = np_logging.getLogger(__name__)
+
+CACHE = pathlib.Path('//allen/programs/mindscope/workgroups/dynamicrouting/ben/nwb_cache')
+
+USE_MIC_SIGNAL = True
+"""Sets the channel on the PXI NI-DAQmx device used for finding latency in aud stim. 
+
+- `True`: use the microphone recording which picks up sound from the stim speaker
+- `False`: use the record of the signal sent to the stim speaker
+"""
 
 def check_array_indices(frame_idx: int | float | Sequence[int | float]) -> Sequence[int | float]:
     """Check indices can be safely converted from float to int. Make
@@ -187,13 +197,6 @@ def get_sync_dataset(
     return sync_dataset.Dataset(get_sync_file(session))
 
 
-def get_frame_timestamps(
-    session: np_session.Session,
-) -> npt.NDArray[np.float64]:
-    return get_sync_dataset(session).get_rising_edges(
-        'vsync_stim', units='seconds'
-    )   # type: ignore
-
 
 def reshape_into_blocks(
     timestamps: Sequence[float],
@@ -220,25 +223,26 @@ def reshape_into_blocks(
         else (np.median(intervals) + 3 * np.std(intervals))
     )
 
-    ends_of_blocks = []
+    gaps_between_blocks = []
     for interval_index, interval in zip(intervals.argsort()[::-1], sorted(intervals)[::-1]):
         if interval > long_interval_threshold:
             # large interval found
-            ends_of_blocks.append(interval_index + 1)
+            gaps_between_blocks.append(interval_index + 1)
         else:
             break
 
-    if not ends_of_blocks: 
+    if not gaps_between_blocks: 
         # a single block of timestamps
         return (timestamps,)
-    
+        
     # create blocks as intervals [start:end]
-    ends_of_blocks.sort()
+    gaps_between_blocks.sort()
     blocks = []
     start = 0
-    for end in ends_of_blocks:
+    for end in gaps_between_blocks:
         blocks.append(timestamps[start:end])
         start = end
+    # add end of last block
     blocks.append(timestamps[start:])
     
     # filter out blocks with a single sample (not a block)
@@ -263,14 +267,37 @@ def get_stim_epochs(
 ) -> tuple[tuple[float, float], ...]:
     """`(start_sec, end_sec)` for each stimulus block - constructed from
     vsyncs"""
-    return tuple(
-        (block[0], block[-1])
-        for block in get_blocks_of_frame_timestamps(session)
+    blocks = (block for block in DRDataLoader(session).vsync_time_blocks if block is not None)
+    return tuple((block[0], block[-1])
+        for block in sorted(blocks, key=lambda block: block[0])
     )
 
+def get_cache(session: np_session.Session) -> pathlib.Path:
+    cache = CACHE / str(session)
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+def clear_cache(session: Optional[np_session.Session] = None) -> None:
+    if session is not None:
+        cache = get_cache(session)
+    else:
+        cache = CACHE
+    for path in cache.rglob('*'):
+        if not path.is_dir():
+            path.unlink()
+    for path in cache.rglob('*'):
+        if path.is_dir():
+            path.unlink()
+    if cache != CACHE:
+        cache.unlink()    
+    
 class DRDataLoader:
     """Class for finding required raw data from a DRpilot session.
     """
+    
+    class Times(NamedTuple):
+        task: Sequence[float]
+        rf: Sequence[float] | None
     
     session: np_session.DRPilotSession
     
@@ -331,7 +358,7 @@ class DRDataLoader:
         return self.sync
     
     def get_nidaq_device_and_data(self) -> None:
-        self._nidaq_mic, self._nidaq_timing = get_pxi_nidaq_mic_data(self.session)
+        self._nidaq_mic, self._nidaq_timing = get_pxi_nidaq_sound_data(self.session)
         
     @property
     def nidaq_timing(self) -> EphysTimingOnSync:
@@ -355,10 +382,7 @@ class DRDataLoader:
     def nidaq_timestamps(self):
         return (self.nidaq_timing.start_time + np.arange(self.nidaq_mic.size)) / self.nidaq_timing.sampling_rate
     
-    class Times(NamedTuple):
-        task: Sequence[float]
-        rf: Sequence[float] | None
-    
+
     @property
     def vsync_time_blocks(self) -> Times:
         """Blocks of vsync falling edge times from sync: one block per stimulus.
@@ -385,13 +409,15 @@ class DRDataLoader:
                 vsyncs = vsyncs[:-1]
             vsync_times_in_blocks.append(vsyncs)
             
-        block_lengths = tuple(len(block) for block in vsync_times_in_blocks)
-        self.main_stim_block_idx = block_lengths.index(max(block_lengths))
-        self.rf_block_idx = None
-        if len(vsync_times_in_blocks) <= 2:
-            self.rf_block_idx = int(not self.main_stim_block_idx)
+        block_lengths = np.array([len(block) for block in vsync_times_in_blocks])
+        
+        self.main_stim_block_idx = np.argmin(abs(block_lengths - np.max(self.task['trialStimStartFrame'][()])))
+        if self.rf_hdf5:
+            self.rf_block_idx = np.argmin(abs(block_lengths - np.max(self.rf['stimStartFrame'][()])))
         else:
-            logger.warning("More than 2 vsync blocks found: cannot determine which is which. Assumptions made may be incorrect.")
+            self.rf_block_idx = None
+        if len(vsync_times_in_blocks) > 2:
+            logger.warning("More than 2 stim blocks found: currently only main task and RF blocks are tracked.")
         
         stim_running_rising_edges: Sequence[float] = self.sync.get_rising_edges('stim_running', units = 'seconds')
         stim_running_falling_edges: Sequence[float] = self.sync.get_falling_edges('stim_running', units = 'seconds')
@@ -448,20 +474,20 @@ class DRDataLoader:
             # drawing the first frame inverts to -1, so assuming the pre-stim
             # frames are grey then the first frame is a grey-to-black (falling)
             # transition
-            falling = falling[falling > vsyncs[0]]
-            rising = rising[rising > falling[0]]
+            falling = diode_falling_edges[diode_falling_edges > vsyncs[0]]
+            rising = diode_rising_edges[diode_rising_edges > falling[0]]
             
             diode_flips = np.sort(np.concatenate((rising, falling)))
             
-            short_interval_threshold = 0.1 * 1/60
-            long_interval_threshold = np.mean(np.diff(diode_flips)) + 3 * np.std(np.diff(diode_flips))
+            short_interval_threshold = 0.1 * 1/60 # at 60 fps we should never have diode-flip intervals this small: consider them anomalous
+            # long_interval_threshold = np.mean(np.diff(diode_flips)) + 3 * np.std(np.diff(diode_flips))
             # long threshold should only be applied at start or end of timestamps
             
-            while np.diff(diode_flips)[0] > long_interval_threshold:
-                diode_flips = diode_flips[1:]
+            # while np.diff(diode_flips)[0] > long_interval_threshold:
+            #     diode_flips = diode_flips[1:]
                 
-            while np.diff(diode_flips)[-1] > long_interval_threshold:
-                diode_flips = diode_flips[:-1]
+            # while np.diff(diode_flips)[-1] > long_interval_threshold:
+            #     diode_flips = diode_flips[:-1]
                 
             def short_interval_indices(frametimes):
                 intervals = np.diff(frametimes)
@@ -476,8 +502,13 @@ class DRDataLoader:
                 diode_flips = diode_flips[:-1]
             
             if round(np.mean(np.diff(diode_flips)), 1) == round(np.mean(np.diff(vsyncs)), 1):
-                # diode flip every vsync
+                # diode flip freq == vsync freq
                 
+                diode_flips = diode_flips[:len(vsyncs)] 
+                # we currently have all diode flips after vsyncs[0]: 
+                # take one flip per vsync, then check the intervals look ok
+                
+                # np.diff(vsyncs) - np.diff(diode_flips)
                 if len(diode_flips) != len(vsyncs):
                     logger.warning(f'Mismatch in stim {block = }: {len(diode_flips) = }, {len(vsyncs) = }')
                 
@@ -490,20 +521,18 @@ class DRDataLoader:
                 pass
                 # TODO adjust frametimes with diode data when flip is every 1 s
 
-            # intervals have bimodal distribution due to asymmetry of
-            # photodiode thresholding: adjust intervals to get a closer
-            # estimate of actual transition time 
+            # diode flip intervals have a bimodal distribution due to asymmetry of
+            # photodiode thresholding: adjust every other interval to get a closer
+            # estimate of actual transition time for each diode flip
             intervals = np.diff(diode_flips)
-            mean_flip_interval = np.mean(intervals)
-            shift = 0.5 * np.median(abs(intervals - mean_flip_interval))
-            
-            for idx in range(0, len(diode_flips) - 1, 2):
-                # alternate on every short/long interval and shift accordingly
-                if idx == 0:
-                    if intervals[0] > mean_flip_interval:
-                        shift = -shift 
-                diode_flips[idx] -= shift
-                diode_flips[idx + 1] += shift
+            interval_deviation = intervals - np.mean(intervals[1:-1]) # the two distributions are symmetric about the mean
+            # first interval length will 
+            sign = 1 if interval_deviation[1] < 0 else -1 
+            for idx in range(1, len(diode_flips) - 1, 2):
+                # alternate on every short/long interval and expand/contract
+                # interval
+                diode_flips[idx] -= sign * 0.5 * interval_deviation[idx]
+                diode_flips[idx + 1] += sign * 0.5 * interval_deviation[idx]
                 
             AVERAGE_SCREEN_REFRESH_TIME = 0.008
             """Screen refreshes in stages top-to-bottom, total 16 ms measured by
@@ -557,22 +586,21 @@ class DRDataLoader:
        
         return self.frame_display_time_blocks.rf
     
-    @property
-    def cache(self) -> pathlib.Path:
-        root = pathlib.Path('//allen/programs/mindscope/workgroups/dynamicrouting/ben/nwb_cache')
-        cache = root / str(self.session)
-        cache.mkdir(parents=True, exist_ok=True)
-        return cache
-    
+
+            
     def get_trial_sound_onsets_offsets_lags(self) -> tuple[Times, Times, Times]:
-        cache = self.cache / 'trial_sound_onsets_offsets_lags.pkl'
+        cache = get_cache(self.session) / f'trial_sound_onsets_offsets_lags_{"mic" if USE_MIC_SIGNAL else "speaker"}.pkl'
         if cache.exists():
             return pickle.loads(cache.read_bytes())
+        
         results: list[tuple] = []
         for block in self.Times._fields:
             
             vsyncs = getattr(self.vsync_time_blocks, block)
             h5 = getattr(self, block)
+            if vsyncs is None or h5 is None: 
+                # rf mapping may be missing
+                continue
             num_trials = len((h5.get('trialEndFrame') or h5.get('trialSoundArray'))[:])
             
             onsets = np.full(num_trials, np.nan)
@@ -584,8 +612,9 @@ class DRDataLoader:
             waveforms = h5['trialSoundArray'][:num_trials]
             
             padding = .15 # sec, either side of expected sound window to make sure entire signal is captured
+            
             for idx, waveform in enumerate(waveforms):
-                print(f'{idx}/{num_trials}\r', flush=True) 
+                print(f'{idx}/{num_trials}\r', flush=True)
                 if not any(waveform):
                     continue
                 
@@ -600,14 +629,12 @@ class DRDataLoader:
                 interp_times = np.arange(-padding, duration + padding, 1 / waveform_rate)
                 interp_values = np.interp(interp_times, times, values)
                 
-                c = np.correlate(interp_values, waveform)
-                
-                # idx, lag = xcorr_waveform_recording()
-                lags[idx] = interp_times[np.argmax(c)]
+                lags[idx] = xcorr(interp_values, waveform, interp_times)
                 onsets[idx] = trigger_time + lags[idx]
                 offsets[idx] = onsets[idx] + duration
                 
-                padding = 2 * lags[idx]
+                # long padding slows down np.corr
+                # padding = 2 * lags[idx]
                 
                 # to verify:
                 """
@@ -774,7 +801,8 @@ def get_sync_file_frame_times(
     return output
 
 def get_sync_messages_text(session) -> pathlib.Path:
-    for raw_folder in np_tools.get_raw_ephys_subfolders(session.npexp_path):
+    path = session.lims_path or session.npexp_path if hasattr(session, 'lims_path') else session.npexp_path
+    for raw_folder in np_tools.get_raw_ephys_subfolders(path):
         for record_node_folder in raw_folder.glob('Record Node*'):
             largest_recording_folder = np_tools.get_single_oebin_path(record_node_folder).parent
             sync_messages_text = largest_recording_folder / 'sync_messages.txt'
@@ -823,7 +851,8 @@ class EphysTimingOnPXI(NamedTuple):
     
 def get_ephys_timing_on_pxi(session, only_dirs_including: str = '') -> Generator[EphysTimingOnPXI, None, None]:
     dirname_to_first_sample_number = get_ephys_timing_info(session) # includes name of each input device used (probe, nidaq)
-    for raw_folder in np_tools.get_raw_ephys_subfolders(session.npexp_path):
+    path = session.lims_path or session.npexp_path if hasattr(session, 'lims_path') else session.npexp_path
+    for raw_folder in np_tools.get_raw_ephys_subfolders(path):
         for record_node_folder in raw_folder.glob('Record Node*'):
             largest_recording_folder = np_tools.get_single_oebin_path(record_node_folder).parent
             for dirname in dirname_to_first_sample_number:
@@ -842,10 +871,10 @@ def get_ephys_timing_on_pxi(session, only_dirs_including: str = '') -> Generator
                     continuous, events, ttl, sampling_rate, ttl_sample_numbers, ttl_states
                 )
                 
-def get_pxi_nidaq_mic_data(session) -> tuple[npt.NDArray[np.int16], EphysTimingOnSync]:
+def get_pxi_nidaq_sound_data(session) -> tuple[npt.NDArray[np.int16], EphysTimingOnSync]:
     """
-    >>> mic_data, nidaq = get_pxi_nidaq_mic_data(np_session.Session('DRpilot_626791_20220817_probeABCF'))
-    >>> mic_data.size
+    >>> sound_data, nidaq = get_pxi_nidaq_sound_data(np_session.Session('DRpilot_626791_20220817_probeABCF'))
+    >>> sound_data.size
     (1, 138586329)
     >>> nidaq.sampling_rate
     30000
@@ -858,7 +887,7 @@ def get_pxi_nidaq_mic_data(session) -> tuple[npt.NDArray[np.int16], EphysTimingO
         raise IndexError(f'Unknown channel configuration for {device.continuous.name = }')
     dat = np.memmap(device.continuous / 'continuous.dat', dtype='int16', mode='r')
     data = np.reshape(dat, (int(dat.size / num_channels), -1)).T
-    return data[mic_channel], next(get_ephys_timing_on_sync(session, device))
+    return data[mic_channel if USE_MIC_SIGNAL else speaker_channel], next(get_ephys_timing_on_sync(session, device))
     
     
 def get_pxi_nidaq_device(session: np_session.Session) -> EphysTimingOnPXI:
@@ -920,11 +949,16 @@ def get_ephys_timing_on_sync(
         yield EphysTimingOnSync(
             device, sampling_rate, start_time
         )
-# def xcorr_waveform_recording(*args):
     
+@numba.njit(parallel = True)
+def xcorr(v, w, t) -> float:
+    c = np.correlate(v, w)
+    return t[np.argmax(c)]
     
 if __name__=="__main__":
+    # x = tuple(get_ephys_timing_on_sync(np_session.Session('1187668018_614608_20220628')))
     x = DRDataLoader('DRpilot_626791_20220817')
+    x.vsync_time_blocks
     x.get_trial_sound_stim_times()
     x.sound_lags
     # doctest.testmod()

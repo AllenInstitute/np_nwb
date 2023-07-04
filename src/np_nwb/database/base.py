@@ -9,16 +9,26 @@ from typing import Any, Iterable, Literal, Optional, Sequence, Union
 import typing
 import uuid
 
-import validated
+import h5py
+import pynwb
+
+import np_nwb.database.validated as validated
    
 
 @dataclasses.dataclass
 class NwbMetadata:
     subject: validated.Subject
     session: validated.Session
-    intervals: Iterable[validated.Intervals]
-     
-        
+    paths: validated.Paths
+    intervals: dict[str, validated.Intervals]
+    
+    def get_nwb(self) -> pynwb.NWBHDF5IO | None: 
+        if not self.paths or not self.paths.nwb:
+            return None
+        h5 = h5py.File(self.paths.nwb.open('rb'))
+        nwb = pynwb.NWBHDF5IO(file=h5, load_namespaces=True).read()
+        return nwb
+    
 class NwbMetadataDB(typing.Protocol):
     
     @abc.abstractmethod
