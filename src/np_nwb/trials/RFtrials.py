@@ -74,7 +74,7 @@ class RFTrials(PropertyDict):
             ]
         )    
         
-    @property
+    @functools.cached_property
     def _first_vsync_time(self) -> float:
         return self._data.vsync_time_blocks.rf[0]
     
@@ -82,96 +82,173 @@ class RFTrials(PropertyDict):
     def _h5(self) -> h5py.File:
         return self._data.rf
     
-    @property
-    def _len(self) -> int:
-        """Number of trials, cached"""
-        with contextlib.suppress(AttributeError):
-            return self._length
-        self._length = len(self.start_time)
-        return self._len
+    @functools.cached_property
+    def _len_all_trials(self) -> int:
+        return len(self._h5['stimStartFrame'][()])
     
-    @property
+    def find(self, key: str) -> Sequence[bool] | None:
+        if key in self._h5:
+            return ~np.isnan(self._h5[key][()])
+        return None
+    
+    
+    @functools.cached_property
+    def _all_aud_freq(self) -> Sequence[float]:
+        freq = np.full(self._len_all_trials, np.nan)
+        for key in ('trialToneFreq', 'trialSoundFreq', 'trialAMNoiseFreq'):
+            if key in self._h5:
+                array = self._h5[key][()]
+                freq[~np.isnan(array)] = array[~np.isnan(array)]
+        return freq
+    
+    @functools.cached_property
+    def _all_aud_idx(self) -> Sequence[float]:
+        return np.where(~np.isnan(self._all_aud_freq), np.arange(self._len_all_trials) , np.nan)
+    
+    @functools.cached_property
+    def _all_vis_idx(self) -> Sequence[float]:
+        flashes = self.find('trialFullFieldContrast')
+        if flashes is None:
+            flashes = np.full(self._len_all_trials, False)
+        gratings = self.find('trialGratingOri')
+        if gratings is None:
+            gratings = np.full(self._len_all_trials, False)
+        return np.where(gratings ^ flashes, np.arange(self._len_all_trials), np.nan)
+    
+    @functools.cached_property
     def start_time(self) -> Sequence[float]:
         return self.get_vis_presentation_times(
-            self._h5['stimStartFrame'][()]
+            self._h5['stimStartFrame'][self._idx]
         )
-        
-    @property
-    def stim_start_time(self) -> Sequence[float]:
-        """Onset of visual or auditory stimulus."""
-        starts = np.nan * np.ones(self._len)
-        for idx in range(self._len):
-            if self.is_vis_stim[idx]:
-                starts[idx] = self.get_vis_presentation_times(self._h5['stimStartFrame'][idx])
-            if self.is_aud_stim[idx]:
-                starts[idx] = self._data.rf_sound_on_off[idx][0]
-        return starts
-
-    @property
-    def stim_stop_time(self) -> Sequence[float]:
-        """Onset of visual or auditory stimulus."""
-        ends = np.nan * np.ones(self._len)
-        frames_per_stim = self._h5['stimFrames'][()]
-        for idx in range(self._len):
-            if self.is_vis_stim[idx]:
-                ends[idx] = self.get_vis_presentation_times(
-                    self._h5['stimStartFrame'][idx] + frames_per_stim
-                    )
-            if self.is_aud_stim[idx]:
-                ends[idx] = self._data.rf_sound_on_off[idx][1]
-
-        return ends
     
-    @property
+    @functools.cached_property
     def stop_time(self) -> Sequence[float]:
         """Latest time in each trial, after all events have occurred."""
         return self.get_vis_presentation_times(
-            self._h5['stimStartFrame'][()] 
+            self._h5['stimStartFrame'][self._idx] 
             + self._h5['stimFrames'][()]
             + self._h5['interStimFrames'][()]
         )
+    
+    @functools.cached_property
+    def stim_start_time(self) -> Sequence[float]:
+        """Onset of mapping stimulus."""
+        starts = np.full(self._len, np.nan)
+        for idx in range(self._len):
+            if self._is_vis_stim[idx]:
+                starts[idx] = self.get_vis_presentation_times(self._h5['stimStartFrame'][self._idx[idx]])
+            if self._is_aud_stim[idx]:
+                starts[idx] = self._data.rf_sound_on_off[self._idx[idx]][0]
+        return starts
 
-    @property
-    def grating_x_pos(self) -> Sequence[float]:
-        return np.array([xy[0] for xy in self._h5['trialVisXY'][()]])
+    @functools.cached_property
+    def stim_stop_time(self) -> Sequence[float]:
+        """Offset of mapping stimulus."""
+        ends = np.full(self._len, np.nan)
+        frames_per_stim = self._h5['stimFrames'][()]
+        for idx in range(self._len):
+            if self._is_vis_stim[idx]:
+                ends[idx] = self.get_vis_presentation_times(
+                    self._h5['stimStartFrame'][self._idx[idx]] + frames_per_stim
+                    )
+            if self._is_aud_stim[idx]:
+                ends[idx] = self._data.rf_sound_on_off[self._idx[idx]][1]
+        return ends
     
-    @property
-    def grating_y_pos(self) -> Sequence[float]:
-        return np.array([xy[1] for xy in self._h5['trialVisXY'][()]])
+    @functools.cached_property
+    def index(self) -> Sequence[int]:
+        return np.arange(self._len_all_trials)[self._idx]
     
-    @property
-    def full_field_contrast(self) -> Sequence[float]:
-        return self._h5['trialFullFieldContrast'][()] if 'trialFullFieldContrast' in self._h5 else np.nan * np.ones(self._len)
+    @functools.cached_property
+    def _idx(self) -> Sequence[int]:
+        """Used for extracting a subset of inds throughout all properties.
+        Must be constructed from private properties directly from the hdf5 file"""
+        return np.arange(self._len_all_trials)
+        
+    @functools.cached_property
+    def _len(self) -> int:
+        return len(self._idx)
     
-    @property
-    def grating_orientation(self) -> Sequence[float]:
-        return self._h5['trialGratingOri'][()] 
+    @functools.cached_property
+    def _tone_freq(self) -> Sequence[float]:
+        for key in ('trialToneFreq', 'trialSoundFreq'):
+            if key in self._h5:
+                return self._h5[key][self._idx]
+        return np.full(self._len, np.nan)
     
-    @property
-    def tone_freq(self) -> Sequence[float]:
-        return self._h5['trialToneFreq'][()] if 'trialToneFreq' in self._h5 else np.nan * np.ones(self._len)
+    @functools.cached_property
+    def _AM_noise_freq(self) -> Sequence[float]:
+        return self._h5['trialAMNoiseFreq'][self._idx] if 'trialAMNoiseFreq' in self._h5 else np.full(self._len, np.nan)
     
-    @property
-    def am_noise_freq(self) -> Sequence[float]:
-        return self._h5['trialAMNoiseFreq'][()] if 'trialAMNoiseFreq' in self._h5 else np.nan * np.ones(self._len)
+    @functools.cached_property
+    def _is_aud_stim(self) -> Sequence[bool]:
+        """Includes AM noise and pure tones."""
+        return np.where(np.isnan(self._all_aud_idx[self._idx]), False, True)
     
-    @property
-    def is_vis_stim(self) -> Sequence[bool]:
+    @functools.cached_property
+    def _is_vis_stim(self) -> Sequence[bool]:
+        return np.where(np.isnan(self._all_vis_idx[self._idx]), False, True)
+    
+    @functools.cached_property
+    def _full_field_contrast(self) -> Sequence[float]:
+        return self._h5['trialFullFieldContrast'][self._idx] if 'trialFullFieldContrast' in self._h5 else np.full(self._len, np.nan)
+    
+class VisMappingTrials(RFTrials):
+    
+    @functools.cached_property
+    def _idx(self) -> Sequence[int]:
+        """Used for extracting a subset of inds throughout all properties.
+        Must be constructed from private properties directly from the hdf5 file"""
+        return np.array(self._all_vis_idx[~np.isnan(self._all_vis_idx)], dtype=np.int32)
+    
+    @functools.cached_property
+    def is_small_field_grating(self) -> Sequence[bool]:
         return ~np.isnan(self.grating_orientation)
     
-    @property
-    def is_aud_stim(self) -> Sequence[bool]:
-        """Includes AM noise and pure tones."""
-        return np.isnan(self.grating_orientation)
+    @functools.cached_property
+    def grating_orientation(self) -> Sequence[float]:
+        return self._h5['trialGratingOri'][self._idx] 
+
+    @functools.cached_property
+    def grating_x(self) -> Sequence[float]:
+        """Position of grating patch center, in pixels from screen center"""
+        return np.array([xy[0] for xy in self._h5['trialVisXY'][self._idx]])
     
-    @property
-    def is_aud_noise_stim(self) -> Sequence[bool]:
-        return ~np.isnan(self.am_noise_freq)
+    @functools.cached_property
+    def grating_y(self) -> Sequence[float]:
+        """Position of grating patch center, in pixels from screen center"""
+        return np.array([xy[1] for xy in self._h5['trialVisXY'][self._idx]])
     
-    @property
-    def is_aud_tone_stim(self) -> Sequence[bool]:
-        return ~np.isnan(self.tone_freq)
+    @functools.cached_property
+    def is_full_field_flash(self) -> Sequence[bool]:
+        return ~np.isnan(self._full_field_contrast)
     
+    @functools.cached_property
+    def flash_contrast(self) -> Sequence[float]:
+        return self._full_field_contrast
+    
+
+        
+class AudMappingTrials(RFTrials):
+    
+    @functools.cached_property
+    def _idx(self) -> Sequence[int]:
+        """Used for extracting a subset of inds throughout all properties.
+        Must be constructed from private properties directly from the hdf5 file"""
+        return np.array(self._all_aud_idx[~np.isnan(self._all_aud_idx)], dtype=np.int32)
+    
+    @functools.cached_property
+    def is_AM_noise(self) -> Sequence[bool]:
+        return ~np.isnan(self._AM_noise_freq)
+    
+    @functools.cached_property
+    def is_pure_tone(self) -> Sequence[bool]:
+        return ~np.isnan(self._tone_freq)
+    
+    @functools.cached_property
+    def freq(self) -> Sequence[float]:
+        """Frequency of pure tone or frequency of modulation for AM noise, in Hz"""
+        return self._all_aud_freq[self._idx]
     
 def main(
     session: interfaces.SessionFolder,
@@ -186,29 +263,32 @@ def main(
     
     if hasattr(session, 'hdf5s') and any('rfmapping' in f.name.lower() for f in session.hdf5s):
         
-        rf_mapping = pynwb.epoch.TimeIntervals(
-            name="rf_mapping",
-            description="Intervals for each receptive-field mapping trial",
-        )
-        
-        obj = RFTrials(session)
-        
-        for column in obj.to_add_trial_column():
-            rf_mapping.add_column(**column)
-        
-        for trial in obj.to_add_trial():
-            rf_mapping.add_row(**trial)
-        
-        nwb_file.add_time_intervals(rf_mapping)
+        for modality, obj in zip(
+            ('visual', 'auditory'), 
+            (VisMappingTrials(session), AudMappingTrials(session)),
+            ):
+            module = pynwb.epoch.TimeIntervals(
+                name=f"{modality}_mapping_trials",
+                description=f"{modality} receptive-field mapping trials",
+            )
+            
+            for column in obj.to_add_trial_column():
+                module.add_column(**column)
+            
+            for trial in obj.to_add_trial():
+                module.add_row(**trial)
+            
+            nwb_file.add_time_intervals(module)
     # TODO add timeseries to link?
     return nwb_file
 
 if __name__ == "__main__":
     doctest.testmod()
-    # x = DRTaskTrials("DRpilot_644864_20230201")
+    # x = VisMappingTrials("DRpilot_644864_20230201").stim_start_time
+    # x = AudMappingTrials("DRpilot_644864_20230201").stim_start_time
     # tuple(x.keys())
     
-    # nwb_file = main('DRpilot_644864_20230131')
+    nwb_file = main('DRpilot_644864_20230131')
     
     # x = RFTrials("DRpilot_644864_20230201")
     # df = x.to_dataframe()
