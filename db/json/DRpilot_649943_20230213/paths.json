@@ -1,0 +1,6 @@
+{
+    "allen": "//allen/programs/mindscope/workgroups/dynamicrouting/PilotEphys/Task 2 pilot/DRpilot_649943_20230213",
+    "raw": null,
+    "sorted": null,
+    "nwb": "s3://aind-scratch-data/np_nwb/DRpilot_649943_20230213/DRpilot_649943_20230213.nwb"
+}
