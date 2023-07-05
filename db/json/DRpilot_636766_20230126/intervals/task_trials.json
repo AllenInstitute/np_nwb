@@ -20,7 +20,7 @@
         "block_index": "0-indexed block number, increments with each block.",
         "context_name": "TODO",
         "index": "0-indexed trial number for regular trials (with stimuli), increments over time; nan for catch trials ",
-        "index_within_block": "0-indexed trial number within a block, increments over the block.",
+        "index_within_block": "0-indexed trial number within a block, increments over the block; nan for catch trials ",
         "scheduled_reward_index_within_block": " # TODO check w/Sam; changed from 'noncontingent_reward_index_within_block'; autoreward scheduled, not necessarily given ",
         "TODO_opto_area_name": "Target location for optogenetic inactivation during the trial.",
         "TODO_opto_area_index": "Target location for optogenetic inactivation during the trial; nan if no opto applied ",
