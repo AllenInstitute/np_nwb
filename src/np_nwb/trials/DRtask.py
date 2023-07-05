@@ -333,9 +333,20 @@ class DRTaskTrials(PropertyDict):
     
     @functools.cached_property
     def index_within_block(self) -> Sequence[int]:
-        """0-indexed trial number within a block, increments over the block."""
-        block_counts = np.concatenate([np.arange(count) for count in np.unique(self.block_index, return_counts=True)[1]])
-        return self.index - sum(block_counts[:self.block_index])
+        """0-indexed trial number within a block, increments over the block.
+        
+        - nan for catch trials
+        """
+        index_within_block = np.full(self._len, np.nan)
+        for i in range(self._len):
+            if np.isnan(self.index[i]):
+                continue
+            elif i == 0 or self.block_index[i] != self.block_index[i - 1]:
+                count = 0
+            else:
+                count += 1
+            index_within_block[i] = count
+        return index_within_block
     
     @functools.cached_property
     def scheduled_reward_index_within_block(self) -> Sequence[float]:
@@ -563,7 +574,7 @@ class DRTaskTrials(PropertyDict):
     @functools.cached_property
     def is_context_switch(self) -> Sequence[bool]:
         """The first trial with a stimulus after a change in context."""
-        return np.isin(self.index_within_block, 0) and ~np.isin(self.block_index, 0)
+        return np.isin(self.index_within_block, 0) & ~np.isin(self.block_index, 0)
     
     """
     @functools.cached_property
