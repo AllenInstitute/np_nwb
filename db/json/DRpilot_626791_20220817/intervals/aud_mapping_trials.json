@@ -1,0 +1,13 @@
+{
+    "name": "aud_mapping_trials",
+    "csv": "https://raw.githubusercontent.com/AllenInstitute/np_nwb/main/db/json/DRpilot_626791_20220817/intervals/aud_mapping_trials.csv",
+    "column_names_to_descriptions": {
+        "stim_start_time": "Onset of mapping stimulus.",
+        "stim_stop_time": "Offset of mapping stimulus.",
+        "index": "",
+        "is_AM_noise": "",
+        "is_pure_tone": "",
+        "freq": "Frequency of pure tone or frequency of modulation for AM noise, in Hz"
+    },
+    "description": "auditory receptive-field mapping trials"
+}
