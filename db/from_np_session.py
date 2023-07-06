@@ -92,7 +92,7 @@ class MetadataFromNpSession:
         
     @functools.cached_property
     def vis_mapping_trials(self) -> validated.Intervals | None:
-        name = 'visual_mapping_trials'
+        name = 'vis_mapping_trials'
         try:
             obj = RFtrials.VisMappingTrials(self._session)
         except FileNotFoundError:
@@ -106,7 +106,7 @@ class MetadataFromNpSession:
         
     @functools.cached_property
     def aud_mapping_trials(self) -> validated.Intervals | None:
-        name = 'auditory_mapping_trials' 
+        name = 'aud_mapping_trials' 
         try:
             obj = RFtrials.AudMappingTrials(self._session)
         except FileNotFoundError:
