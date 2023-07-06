@@ -233,10 +233,9 @@ class Paths(BaseModel):
     """Current nwb file"""
     
     @pydantic.validator('raw', 'sorted', 'nwb', allow_reuse=True, pre=True)
-    def check_path(cls, v):
+    def ensure_s3_path(cls, v):
+        """UPath's factory method isn't working too well at the moment. Cast
+        to S3Path implementation manually."""
         if v is None:
             return None
-        v = upath.implementations.cloud.S3Path(v)
-        if v is not None and not v.exists():
-            return None
-        return v
+        return upath.implementations.cloud.S3Path(v)
