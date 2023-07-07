@@ -2,6 +2,7 @@
     "subject_id": "649943",
     "description": "C57BL6J-649943",
     "date_of_birth": "2022-09-12T17:00:00-07:00",
+    "age": "P154D",
     "genotype": "wt/wt",
     "sex": "F",
     "strain": null,

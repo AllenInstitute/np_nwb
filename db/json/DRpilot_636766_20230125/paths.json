@@ -2,5 +2,7 @@
     "allen": "//allen/programs/mindscope/workgroups/dynamicrouting/PilotEphys/Task 2 pilot/DRpilot_636766_20230125",
     "raw": null,
     "sorted": null,
-    "nwb": "s3://aind-scratch-data/np_nwb/DRpilot_636766_20230125/DRpilot_636766_20230125.nwb"
+    "nwb": "s3://aind-scratch-data/np_nwb/DRpilot_636766_20230125/DRpilot_636766_20230125.nwb",
+    "task_h5": "//allen/programs/mindscope/workgroups/dynamicrouting/DynamicRoutingTask/Data/636766/DynamicRouting1_636766_20230125_130602.hdf5",
+    "rf_h5": "//allen/programs/mindscope/workgroups/dynamicrouting/DynamicRoutingTask/Data/636766/RFMapping_636766_20230125_124953.hdf5"
 }

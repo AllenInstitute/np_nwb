@@ -1,0 +1,11 @@
+{
+    "subject_id": "625919",
+    "description": "C57BL6J-625919",
+    "date_of_birth": "2022-03-15T17:00:00-07:00",
+    "age": "P135D",
+    "genotype": "wt/wt",
+    "sex": "F",
+    "strain": null,
+    "weight": null,
+    "species": "Mus musculus"
+}

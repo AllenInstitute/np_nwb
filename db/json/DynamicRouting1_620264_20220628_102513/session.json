@@ -1,0 +1,27 @@
+{
+    "session_start_time": "2022-06-28T10:25:13",
+    "session_id": "DynamicRouting1_620264_20220628_102513",
+    "session_description": "data and metadata for a session with behavior",
+    "lab": "Mindscope, Neural Circuits & Behavior",
+    "institution": "Allen Institute",
+    "experimenter": null,
+    "experiment_description": "dynamic routing aud/vis",
+    "keywords": [
+        "go-nogo",
+        "context",
+        "routing",
+        "auditory",
+        "visual",
+        "behavior"
+    ],
+    "notes": null,
+    "pharmacology": null,
+    "protocol": null,
+    "related_publications": null,
+    "source_script": null,
+    "source_script_file_name": null,
+    "data_collection": null,
+    "surgery": null,
+    "virus": null,
+    "stimulus_notes": null
+}
